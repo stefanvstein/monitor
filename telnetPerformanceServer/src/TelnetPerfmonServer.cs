@@ -8,101 +8,189 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Net;
 using System.Text;
+using IronPython;
+using IronPython.Hosting;
+using Microsoft.Scripting;
+using Microsoft.Scripting.Hosting;
 namespace PerfomanceTools.TelnetPerfmonServer
 {
     class Program
     {
-        static volatile bool isPolling=false;
+        static volatile bool isPolling = false;
         static void Main(string[] args)
         {
-            if (args.Count() < 3)
-            {
-                Console.WriteLine("Supply:");
-                Console.WriteLine("port interval expression");
-                Console.WriteLine("as arguments, where expression is a regular expression matching perfmon categories,");
-                Console.WriteLine("port is listener and interval is polling interval in seconds");
-                return;
-            }
-            int port = int.Parse(args[0]);
-            int interval = int.Parse(args[1]);
-
-            StringBuilder builder = new StringBuilder();
-            foreach (String s in args.Skip(2))
-                builder.Append(s + " ");
-            Regex categoryExpression = new Regex(builder.ToString(0, builder.Length - 1));
-            Perfmon perfmon = new Perfmon();
-            SharedSampleListeners sharedlisteners = new SharedSampleListeners();
-            foreach (String category in Perfmon.ListLiveCategories())
-                if (categoryExpression.IsMatch(category))
-                {
-                    perfmon.AddCategory(category, sharedlisteners);
-                    Console.WriteLine(" " + category);
-                }
-            Console.WriteLine("every " + interval + " s");
-            Console.WriteLine("Data available on port " + port);
-            Console.WriteLine("... ");
-            
-            Timer timer = new Timer((object o) => {
-                if (!isPolling)
-                {
-                    lock (builder)
-                    {
-                        isPolling = true;
-                        try
-                        {
-                            perfmon.Poll();
-                        }
-                        finally { isPolling = false; }
-                    }
-                }
-                else {
-                    Console.WriteLine("Exhausted at " + new DateTime());
-                }
-            }, null, 0, interval*1000);
             try
             {
 
+                ScriptEngine engine = Python.CreateEngine();
+                
+                ScriptScope scope = engine.CreateScope();
+                scope.SetVariable("hosts", new Dictionary<String, Regex>());
+                if (args.Count() < 3)
+                {
+                    Console.WriteLine("Supply:");
+                    Console.WriteLine("port interval scriptfile");
+                    Console.WriteLine("as arguments, where:");
+                    Console.WriteLine("port is listener");
+                    Console.WriteLine("interval is polling interval in seconds");
+                    Console.WriteLine("scriptfile is a python file defining the configuration");
+                    return;
+                }
+                int port = int.Parse(args[0]);
+                int interval = int.Parse(args[1]);
 
-                TcpListener listener = new TcpListener(new IPEndPoint(IPAddress.Any, port));
-                listener.Start();
-                Console.WriteLine("Listening");
-
-                while (true)
+                try
+                {
+                    engine.CreateScriptSourceFromFile(args[2]).Execute(scope);
+                }
+                catch (SyntaxErrorException e)
                 {
 
-                    TcpClient client = listener.AcceptTcpClient();
-                    client.SendTimeout = 5000;
-
-                    NetworkStream stream = client.GetStream();
-                    TextWriter sw = TextWriter.Synchronized(new StreamWriter(stream) { AutoFlush = false });
-                    StreamReader sr = new StreamReader(stream);
-                    try
-                    {
-                        SampleListenerFilter sl = new SampleListenerFilter(new Regex(".*"), new Regex(".*"), new Regex(".*"), new Regex(".*"), new StructSampleListener(sw), false);
-
-                        sharedlisteners.Add(sl);
-                        Thread t = new Thread(new CommandLoop(sw, sr, sl).commandLoop);
-                        t.IsBackground = true;
-                        t.Start();
-                        //Appearently, we dont need to cleanup the handle in .NET!?!?
+                    Console.WriteLine(e.Message + " at " + e.SourcePath + ":" + e.Line + " \"" + e.SourceCode + "\"");
+                    return;
+                }
+                Dictionary<String, Regex> confFromScript = scope.GetVariable<Dictionary<String, Regex>>("hosts");
+                
+                Dictionary<String, Regex> conf = new Dictionary<string, Regex>();
+                foreach (var entry in confFromScript)
+                try
+                {
+                    var ip=Dns.GetHostEntry(entry.Key);
+                    if (conf.ContainsKey(ip.HostName)) {
+                        Console.WriteLine("Host " + ip.HostName + " defined more than once");
+                        return;
                     }
-                    catch (Exception)
+
+                    conf.Add(ip.HostName, entry.Value);
+
+                }
+                catch (SocketException)
+                {
+                    Console.WriteLine(entry.Key + " is not recognized as a host");
+                    continue;
+                }
+                if (conf.Count == 0)
+                {
+                    Console.WriteLine("No hosts to monitor defined");
+                    return;
+                }
+                SharedSampleListeners sharedlisteners = new SharedSampleListeners();
+                Dictionary<String, Perfmon> perfmons = new Dictionary<String, Perfmon>();
+               
+                foreach (var host in conf)
+                {
+                    perfmons.Add(host.Key, new Perfmon(host.Key));
+                }
+
+
+                foreach (var host in conf)
+                {
+                    
+                  
+                    foreach (var category in perfmons[host.Key].ListLiveCategories())
+                        if (host.Value.IsMatch(category))
+                        {
+                            perfmons[host.Key].AddCategory(category, sharedlisteners);
+                            Console.WriteLine(host.Key + ": " + category);
+                        }
+                }
+                List<String> perfmonsToRemove = new List<String>();
+                foreach (var perfmon in perfmons)
+                {
+                    if (perfmon.Value.Categories().Count == 0)
                     {
-                        sw.WriteLine("Sorry... bye bye");
-                        stream.Close();
+                        perfmonsToRemove.Add(perfmon.Key);
+                        Console.WriteLine(perfmon.Key + " has no suitable counters to monitor");
                     }
                 }
+                foreach (var toRemove in perfmonsToRemove)
+                    perfmons.Remove(toRemove);
+
+                if (perfmons.Count == 0)
+                {
+                    Console.WriteLine("Nothing to monitor");
+                    return;
+                }
+
+                Console.WriteLine("Checking every " + interval + " s");
+                Console.WriteLine("Data available on port " + port);
+                Console.WriteLine("... ");
+                Object lockObject = new Object();
+                Timer timer = new Timer((object o) =>
+                {
+                    if (!isPolling)
+                    {
+                        lock (lockObject)
+                        {
+                            isPolling = true;
+                            try
+                            {
+                                foreach (Perfmon perfmon in perfmons.Values)
+                                    try
+                                    {
+                                        perfmon.Poll();
+                                    }
+                                    catch (Exception e)
+                                    {
+                                        Console.WriteLine(perfmon.Host() + " could not be polled." + e.Message);
+                                    }
+                            }
+                            finally { isPolling = false; }
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("Exhausted at " + new DateTime());
+                    }
+                }, null, 0, interval * 1000);
+                try
+                {
+
+
+                    TcpListener listener = new TcpListener(new IPEndPoint(IPAddress.Any, port));
+                    listener.Start();
+                    Console.WriteLine("Listening");
+
+                    while (true)
+                    {
+
+                        TcpClient client = listener.AcceptTcpClient();
+                        client.SendTimeout = 5000;
+
+                        NetworkStream stream = client.GetStream();
+                        TextWriter sw = TextWriter.Synchronized(new StreamWriter(stream) { AutoFlush = false });
+                        StreamReader sr = new StreamReader(stream);
+                        try
+                        {
+                            SampleListenerFilter sl = new SampleListenerFilter(new Regex(".*"), new Regex(".*"), new Regex(".*"), new Regex(".*"), new StructSampleListener(sw), false);
+
+                            sharedlisteners.Add(sl);
+                            Thread t = new Thread(new CommandLoop(sw, sr, sl).commandLoop);
+                            t.IsBackground = true;
+                            t.Start();
+                            //Appearently, we dont need to cleanup the handle in .NET!?!?
+                        }
+                        catch (Exception)
+                        {
+                            sw.WriteLine("Sorry... bye bye");
+                            stream.Close();
+                        }
+                    }
+                }
+                finally
+                {
+                    timer.Dispose();
+                }
+
+
+
             }
-            finally
+            catch (Exception e)
             {
-                timer.Dispose();
+                Console.WriteLine(e);
             }
         }
-
-
-
     }
-
 
     class CommandLoop
     {

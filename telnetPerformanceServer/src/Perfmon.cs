@@ -68,11 +68,16 @@ namespace PerformanceTools.Perfmon
             return new LiveCategories(computerName);
         }
 
-        public static IEnumerable<String> ListLiveCategories()
+        public  IEnumerable<String> ListLiveCategories()
         {
-            return new LiveCategories(Environment.MachineName);
+            return new LiveCategories(computerName);
         }
-
+        public List<String> Categories() {
+            var result = new List<String>();
+            foreach(String name in categories.Keys)
+                result.Add(name);
+            return result;
+        }
         public PerformanceCounterCategory AddCategory(String categoryName, params SampleListener[] listeners)
         {
             if (categories.Keys.Contains(categoryName))
@@ -99,7 +104,9 @@ namespace PerformanceTools.Perfmon
         }
 
 
-
+        public String Host() {
+            return computerName;
+        }
         public void Poll()
         {
             foreach (String categoryName in categories.Keys)
