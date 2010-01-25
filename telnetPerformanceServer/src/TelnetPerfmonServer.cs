@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using PerformanceTools.Perfmon;
+using PerformanceTools.Perfmons;
 using System.Text.RegularExpressions;
 using System.Net.Sockets;
 using System.Threading;
@@ -12,10 +12,38 @@ using IronPython;
 using IronPython.Hosting;
 using Microsoft.Scripting;
 using Microsoft.Scripting.Hosting;
-namespace PerfomanceTools.TelnetPerfmonServer
+using PerformanceTools.Impersonation;
+namespace PerformanceTools.TelnetPerfmonServer
 {
+    public class Credentials
+    {
+        private readonly string user;
+        private readonly string domain;
+        private readonly string password;
+
+        public String User
+        {
+            get { return user; }
+            
+        }
+        public String Domain
+        {
+            get{ return domain;}
+        }
+        public String Password
+        {
+            get{ return password;}
+       }
+
+        public Credentials(String user, String domain, String password)
+        {
+            this.user = user; this.domain = domain; this.password = password;
+        }
+    }
     class Program
     {
+        private static readonly string HOSTS = "hosts";
+        private static readonly string CREDENTIALS = "credentials";
         static volatile bool isPolling = false;
         static void Main(string[] args)
         {
@@ -23,9 +51,10 @@ namespace PerfomanceTools.TelnetPerfmonServer
             {
 
                 ScriptEngine engine = Python.CreateEngine();
-                
+
                 ScriptScope scope = engine.CreateScope();
-                scope.SetVariable("hosts", new Dictionary<String, Regex>());
+                scope.SetVariable(HOSTS, new Dictionary<String, Regex>());
+                scope.SetVariable(CREDENTIALS, new Dictionary<String, Credentials>());
                 if (args.Count() < 3)
                 {
                     Console.WriteLine("Supply:");
@@ -49,26 +78,44 @@ namespace PerfomanceTools.TelnetPerfmonServer
                     Console.WriteLine(e.Message + " at " + e.SourcePath + ":" + e.Line + " \"" + e.SourceCode + "\"");
                     return;
                 }
-                Dictionary<String, Regex> confFromScript = scope.GetVariable<Dictionary<String, Regex>>("hosts");
-                
+                //Dictionary<String, Regex> confFromScript = scope.GetVariable<Dictionary<String, Regex>>("hosts");
+
                 Dictionary<String, Regex> conf = new Dictionary<string, Regex>();
-                foreach (var entry in confFromScript)
-                try
-                {
-                    var ip=Dns.GetHostEntry(entry.Key);
-                    if (conf.ContainsKey(ip.HostName)) {
-                        Console.WriteLine("Host " + ip.HostName + " defined more than once");
-                        return;
+                foreach (var entry in scope.GetVariable<Dictionary<String, Regex>>(HOSTS))
+                    try
+                    {
+                        var ip = Dns.GetHostEntry(entry.Key);
+                        if (conf.ContainsKey(ip.HostName))
+                        {
+                            Console.WriteLine("Host " + ip.HostName + " defined more than once");
+                            return;
+                        }
+
+                        conf.Add(ip.HostName, entry.Value);
                     }
+                    catch (SocketException)
+                    {
+                        Console.WriteLine(entry.Key + " is not recognized as a host");
+                        continue;
+                    }
+                Dictionary<String, Credentials> credentials = new Dictionary<string,Credentials>();
+                foreach (var entry in scope.GetVariable<Dictionary<String, Credentials>>(CREDENTIALS))
+                    try
+                    {
+                        var ip = Dns.GetHostEntry(entry.Key);
+                        if (credentials.ContainsKey(ip.HostName))
+                        {
+                            Console.WriteLine("Credentials for host " + ip.HostName + " defined more than once");
+                            return;
+                        }
 
-                    conf.Add(ip.HostName, entry.Value);
-
-                }
-                catch (SocketException)
-                {
-                    Console.WriteLine(entry.Key + " is not recognized as a host");
-                    continue;
-                }
+                        credentials.Add(ip.HostName, entry.Value);
+                    }
+                    catch (SocketException)
+                    {
+                        Console.WriteLine(entry.Key + " is not recognized as a host");
+                        continue;
+                    }
                 if (conf.Count == 0)
                 {
                     Console.WriteLine("No hosts to monitor defined");
@@ -76,25 +123,36 @@ namespace PerfomanceTools.TelnetPerfmonServer
                 }
                 SharedSampleListeners sharedlisteners = new SharedSampleListeners();
                 Dictionary<String, Perfmon> perfmons = new Dictionary<String, Perfmon>();
-               
-                foreach (var host in conf)
-                {
-                    perfmons.Add(host.Key, new Perfmon(host.Key));
-                }
-
 
                 foreach (var host in conf)
                 {
-                    
-                  
-                    foreach (var category in perfmons[host.Key].ListLiveCategories())
-                        if (host.Value.IsMatch(category))
-                        {
-                            perfmons[host.Key].AddCategory(category, sharedlisteners);
-                            Console.WriteLine(host.Key + ": " + category);
-                        }
+                    if (credentials.ContainsKey(host.Key))
+                    {
+                        Credentials creds = credentials[host.Key];
+                        perfmons.Add(host.Key, new Perfmon(host.Key, new Impersonation.Impersonator(creds.User, creds.Domain, creds.Password)));
+                    }
+                    else
+                        perfmons.Add(host.Key, new Perfmon(host.Key));
                 }
+
                 List<String> perfmonsToRemove = new List<String>();
+                foreach (var host in conf)
+                {
+                    try
+                    {
+                        foreach (var category in perfmons[host.Key].ListLiveCategories())
+                            if (host.Value.IsMatch(category))
+                            {
+                                perfmons[host.Key].AddCategory(category, sharedlisteners);
+                                Console.WriteLine(host.Key + ": " + category);
+                            }
+                    }
+                    catch (ImpersonationException e) {
+                        Console.WriteLine(e.Message);
+                        perfmonsToRemove.Add(host.Key);
+                    }
+                }
+                
                 foreach (var perfmon in perfmons)
                 {
                     if (perfmon.Value.Categories().Count == 0)
@@ -158,7 +216,7 @@ namespace PerfomanceTools.TelnetPerfmonServer
                         client.SendTimeout = 5000;
 
                         NetworkStream stream = client.GetStream();
-                        TextWriter sw = TextWriter.Synchronized(new StreamWriter(stream) { AutoFlush = false });
+                        TextWriter sw = TextWriter.Synchronized(new StreamWriter(stream) { AutoFlush = true });
                         StreamReader sr = new StreamReader(stream);
                         try
                         {

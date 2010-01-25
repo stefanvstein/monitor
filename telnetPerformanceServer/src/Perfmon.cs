@@ -5,8 +5,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
+using PerformanceTools.Impersonation;
 
-namespace PerformanceTools.Perfmon
+namespace PerformanceTools.Perfmons
 {
     public interface SampleListener
     {
@@ -19,22 +20,43 @@ namespace PerformanceTools.Perfmon
     internal class LiveCategories : IEnumerable<String>
     {
         private string computerName;
+        private IImpersonator impersonation;
 
         public LiveCategories(String computerName)
         {
             this.computerName = computerName;
+            this.impersonation = new NullImpersonator();
         }
-
+        public LiveCategories(String computerName, IImpersonator impersonation)
+        {
+            this.computerName = computerName;
+            this.impersonation = impersonation;
+        }
         public IEnumerator<string> GetEnumerator()
         {
-            foreach (PerformanceCounterCategory category in PerformanceCounterCategory.GetCategories(computerName))
-                yield return category.CategoryName;
+            impersonation.Impersonate();
+            try
+            {
+                foreach (PerformanceCounterCategory category in PerformanceCounterCategory.GetCategories(computerName))
+                    yield return category.CategoryName;
+            }
+            finally {
+                impersonation.Dispose();
+            }
         }
 
         IEnumerator IEnumerable.GetEnumerator()
         {
-            foreach (PerformanceCounterCategory category in PerformanceCounterCategory.GetCategories(computerName))
-                yield return category.CategoryName;
+            impersonation.Impersonate();
+            try
+            {
+                foreach (PerformanceCounterCategory category in PerformanceCounterCategory.GetCategories(computerName))
+                    yield return category.CategoryName;
+            }
+            finally
+            {
+                impersonation.Dispose();
+            }
         }
     }
 
@@ -52,29 +74,41 @@ namespace PerformanceTools.Perfmon
 
 
         private String computerName;
-
-
+        private IImpersonator impersonation;
+        public Perfmon(String computerName, IImpersonator impersonation)
+        {
+            this.computerName = computerName;
+            this.impersonation = impersonation;
+        }
         public Perfmon(String computerName)
         {
             this.computerName = computerName;
+            this.impersonation = new NullImpersonator();
         }
 
-        public Perfmon() {
+        public Perfmon()
+        {
             this.computerName = Environment.MachineName;
+            this.impersonation = new NullImpersonator();
         }
 
         public static IEnumerable<String> ListLiveCategoriesOn(String computerName)
         {
             return new LiveCategories(computerName);
         }
-
-        public  IEnumerable<String> ListLiveCategories()
+        public static IEnumerable<String> ListLiveCategoriesOn(String computerName, IImpersonator impersonation)
         {
-            return new LiveCategories(computerName);
+            return new LiveCategories(computerName, impersonation);
         }
-        public List<String> Categories() {
+        public IEnumerable<String> ListLiveCategories()
+        {
+            return new LiveCategories(computerName, impersonation);
+        }
+
+        public List<String> Categories()
+        {
             var result = new List<String>();
-            foreach(String name in categories.Keys)
+            foreach (String name in categories.Keys)
                 result.Add(name);
             return result;
         }
@@ -93,7 +127,7 @@ namespace PerformanceTools.Perfmon
                         if (category.CategoryName == categoryName)
                         {
                             categories.Add(category.CategoryName, category);
-                       
+
                             listenersPerCategory.Add(category.CategoryName, listeners);
                             return category;
                         }
@@ -104,67 +138,73 @@ namespace PerformanceTools.Perfmon
         }
 
 
-        public String Host() {
+        public String Host()
+        {
             return computerName;
         }
         public void Poll()
         {
-            foreach (String categoryName in categories.Keys)
+
+            impersonation.Impersonate();
+            try
             {
-                //Console.WriteLine(DateTime.Now +" polling " + categoryName);
-                InstanceDataCollectionCollection previousCategoryData;
-                previousSamples.TryGetValue(categoryName, out previousCategoryData);
-                InstanceDataCollectionCollection currentCategoryData = categories[categoryName].ReadCategory();
-                DateTime now = DateTime.Now;
-                previousSamples[categoryName] = currentCategoryData;
-                if (previousCategoryData != null)
+                foreach (String categoryName in categories.Keys)
                 {
-                    //                    Console.WriteLine(categories[categoryName].CategoryName);
-                    foreach (SampleListener listener in listenersPerCategory[categoryName])
-                        listener.Category(computerName,categories[categoryName].CategoryName,
-                                      categories[categoryName].CategoryType ==
-                                      PerformanceCounterCategoryType.MultiInstance, now);
-                    IEnumerator counterKeys = currentCategoryData.Keys.GetEnumerator();
-                    while (counterKeys.MoveNext())
+                    //Console.WriteLine(DateTime.Now +" polling " + categoryName);
+                    InstanceDataCollectionCollection previousCategoryData;
+                    previousSamples.TryGetValue(categoryName, out previousCategoryData);
+                    InstanceDataCollectionCollection currentCategoryData = categories[categoryName].ReadCategory();
+                    DateTime now = DateTime.Now;
+                    previousSamples[categoryName] = currentCategoryData;
+                    if (previousCategoryData != null)
                     {
-                        InstanceDataCollection counter = currentCategoryData[(String)counterKeys.Current];
-                        InstanceDataCollection previousCounter = previousCategoryData[(String)counterKeys.Current];
-                        if (previousCounter != null)
+                        //                    Console.WriteLine(categories[categoryName].CategoryName);
+                        foreach (SampleListener listener in listenersPerCategory[categoryName])
+                            listener.Category(computerName, categories[categoryName].CategoryName,
+                                          categories[categoryName].CategoryType ==
+                                          PerformanceCounterCategoryType.MultiInstance, now);
+                        IEnumerator counterKeys = currentCategoryData.Keys.GetEnumerator();
+                        while (counterKeys.MoveNext())
                         {
-                            if (categories[categoryName].CategoryType == PerformanceCounterCategoryType.MultiInstance)
+                            InstanceDataCollection counter = currentCategoryData[(String)counterKeys.Current];
+                            InstanceDataCollection previousCounter = previousCategoryData[(String)counterKeys.Current];
+                            if (previousCounter != null)
                             {
-                                IEnumerator instanceKeys = counter.Keys.GetEnumerator();
-                                while (instanceKeys.MoveNext())
+                                if (categories[categoryName].CategoryType == PerformanceCounterCategoryType.MultiInstance)
                                 {
-                                    InstanceData data = counter[(string)instanceKeys.Current];
-                                    InstanceData previous = previousCounter[(string)instanceKeys.Current];
-                                    if (previous != null)
+                                    IEnumerator instanceKeys = counter.Keys.GetEnumerator();
+                                    while (instanceKeys.MoveNext())
                                     {
-                                        float value =
-                                           CounterSample.Calculate(previous.Sample, data.Sample);
-                                        //Kanske skall vi använda CouterSample.Calculate instead
-                                        //float value =
-                                          //  CounterSampleCalculator.ComputeCounterValue(previous.Sample, data.Sample);
-                                        foreach (SampleListener listener in listenersPerCategory[categoryName])
-                                            listener.Data(counter.CounterName, data.InstanceName, value);
+                                        InstanceData data = counter[(string)instanceKeys.Current];
+                                        InstanceData previous = previousCounter[(string)instanceKeys.Current];
+                                        if (previous != null)
+                                        {
+                                            float value =
+                                               CounterSample.Calculate(previous.Sample, data.Sample);
+                                            //Kanske skall vi använda CouterSample.Calculate instead
+                                            //float value =
+                                            //  CounterSampleCalculator.ComputeCounterValue(previous.Sample, data.Sample);
+                                            foreach (SampleListener listener in listenersPerCategory[categoryName])
+                                                listener.Data(counter.CounterName, data.InstanceName, value);
+                                        }
                                     }
                                 }
-                            }
-                            else
-                            {
-                                IEnumerator instanceKeys = counter.Keys.GetEnumerator();
-                                if (instanceKeys.MoveNext())
+                                else
                                 {
-                                    CounterSample current = counter[(String)instanceKeys.Current].Sample;
-                                    InstanceData previousInstance = previousCounter[(String)instanceKeys.Current];
-                                    if (previousInstance != null)
+                                    IEnumerator instanceKeys = counter.Keys.GetEnumerator();
+                                    if (instanceKeys.MoveNext())
                                     {
-                                        //float value =
-                                          //  CounterSampleCalculator.ComputeCounterValue(previousInstance.Sample,
+                                        CounterSample current = counter[(String)instanceKeys.Current].Sample;
+                                        InstanceData previousInstance = previousCounter[(String)instanceKeys.Current];
+                                        if (previousInstance != null)
+                                        {
+                                            //float value =
+                                            //  CounterSampleCalculator.ComputeCounterValue(previousInstance.Sample,
                                             //                                            current);
-                                        float value = CounterSample.Calculate(previousInstance.Sample, current);
-                                        foreach (SampleListener listener in listenersPerCategory[categoryName])
-                                            listener.Data(counter.CounterName, value);
+                                            float value = CounterSample.Calculate(previousInstance.Sample, current);
+                                            foreach (SampleListener listener in listenersPerCategory[categoryName])
+                                                listener.Data(counter.CounterName, value);
+                                        }
                                     }
                                 }
                             }
@@ -172,9 +212,10 @@ namespace PerformanceTools.Perfmon
                     }
                 }
             }
+            finally { impersonation.Dispose(); }
+
         }
     }
-
     public class PrintingSampleListener : SampleListener
     {
         private TextWriter writer;
