@@ -1,5 +1,5 @@
 (ns se.sj.monitor.mem 
-;  (:gen-class)
+  (:gen-class)
 )
 
 ;This name space contain functions for delaing with databases represented by a map of sorted maps
