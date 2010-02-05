@@ -1,6 +1,5 @@
 (ns se.sj.monitor.mem 
-  (:gen-class)
-)
+  (:use clojure.test))
 
 ;This name space contain functions for delaing with databases represented by a map of sorted maps
 ;In general the following conventions are used:
@@ -86,27 +85,58 @@
   (filter #(not (nil? %)) 
 	  (map #(when (empty? %1) %2) (vals database) (keys database)))) 
 
+(deftest test-mem
 
-(comment
-  (def data (ref {}))
+  (let [ data (ref {})]
+
   (dosync (alter data add "Örjan" 1 3)
 	  (alter data add "Örjan" 4 5)
 	  (alter data add "Sture" 2 23)
 	  (alter data add "Niklas" 44 5))
-  (println @data)
-  (println (remove-from-each-while @data #(> 3 %)))
+  (is (= {"Örjan" {4 5, 1 3}
+	  "Sture" {2 23}
+	  "Niklas" {44 5 }}
+	 @data)
+      "add data")
+
+  (is (= {"Örjan" {4 5}, "Sture" {}, "Niklas" {44 5}}
+	 (remove-from-each-while @data #(> 3 %)))
+      "remove-from-each-while")
+
   (dosync (alter data remove-from-each-while #(> 3 %)))
-  (println @data)
-  (print "Will remove ")
-  (println (doall (empty-rows @data)))
-  (dosync (doall (map #(alter data dissoc %) (empty-rows @data))))
-  (println @data)
-  (println (by-name @data "Niklas"))
+  (is (= {"Örjan" {4 5}, "Sture" {}, "Niklas" {44 5}} @data) "remove-from-each-while commited")
+
+
+  (is (= '("Sture") (doall (empty-names @data))) "the empty-names")
+
+  (dosync (doall (map #(alter data dissoc %) (empty-names @data))))
+  (is (= {"Örjan" {4 5}, "Niklas" {44 5}} @data) "empty-names commited")
+  
+  (is (= {44 5} (by-name @data "Niklas")) "data for a user (Niklas)")
+  
   (dosync (alter data add "Niklas" {6 76,8 65})
 	  (alter data add "Niklas" (by-name @data "Örjan"))
-	  (alter data add "Olle" {3 45, 2 54}))
+	  (alter data add "Olle" {3 45, 2 54}))  
+  (is (= {"Niklas" {4 5, 6 76, 8 65, 44 5}, 
+	  "Örjan" {4 5}, 
+	  "Olle" { 2 54 3 45}} 
+	 @data) 
+      "Additional data added")))
 
-  (println @data)
-  (println (key-shifted (by-name @data "Niklas") #(- % 20)))
-  (println (class (first (key-shift (by-name @data "Niklas") #(- % 20)))))
-)
+(deftest test-shifting
+  (let [data (ref {"Niklas" {4 5, 6 76, 8 65, 44 5}, 
+		   "Örjan" {4 5}, 
+		   "Olle" { 2 54 3 45}})]
+
+  (is (= { (- 4 20) 5, (- 6 20) 76, (- 8 20) 65, (- 44 20) 5} 
+	 (key-shifted (by-name @data "Niklas") #(- % 20))) 
+      "shifted by -20")
+
+  (is (= '([-16 5]  [-14 76] [-12 65] [24 5])  
+	 (key-shift (by-name @data "Niklas") #(- % 20))) 
+      "key-shift:ed seq of map entries")
+  (dosync (alter data with-keys-shifted #(. % startsWith "N") #(+ 1 %)))
+  (is (= {"Niklas" {5 5, 7 76, 9 65, 45 5}, 
+	   "Örjan" {4 5}, 
+	   "Olle" { 2 54 3 45}}
+       @data) "with-keys-shifted for those that has names starting with \"N\"")))

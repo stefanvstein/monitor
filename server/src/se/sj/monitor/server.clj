@@ -1,94 +1,72 @@
 (ns se.sj.monitor.server
-  (:use (se.sj.monitor mem perfmon) )
+  (:use (se.sj.monitor mem perfmon names) )
   (:use [clojure.contrib.duck-streams :only (reader)] )
+  (:import (java.net Socket) (java.io PrintWriter))
+  ; for testing purposes
   (:use clojure.test)
-  (:import (java.io BufferedReader FileReader)))
+  ;for repl purposes
+  (:use (clojure stacktrace inspector)))
 ;This should be private to a perfmon connection. It translates names for a connection
-(def perfmon-names (ref {}))
 
-(defn store-name 
-  [ names identifier name]
-  (dosync (alter perfmon-names
-		 (assoc names identifier (name-counter 
-					  (dissoc-first-found identifier 
-							      (reverse perfmon-columns)) 
-					  names
-					  perfmon-columns
-					  name)))))
+(def perfmon-data (ref {}))
+(def comments (atom {}))
 
-(defn get-name
-  "Returns the full name" 
-  [ names identifier]
-  (get @names identifier)
-  )
-
-(defn create-obj [line]
+(defn causes [#^java.lang.Throwable e] (take-while #(not (nil? %)) (iterate #(when % (. % getCause)) e)))
+(defn- create-obj [line perfmon-names perfmon-data current-time comments]
   (parse-perfmon-string line 
-			(fn [a b] 
-			  (store-name perfmon-names a b)
-			  (list a b))
-			(fn [a b] (list a b))
-			(fn [a] (list a))
-			(fn [a] (list a))))
+			(fn [identifier name] 
+			  (store-name perfmon-names identifier name perfmon-columns))
+			(fn [identifier value] 
+			  (when @current-time 
+			    (dosync (alter perfmon-data add 
+					   (get-name perfmon-names identifier) 
+					   @current-time 
+					   value))))
+			(fn [a-comment] 
+			  (when @current-time 
+			    (swap! comments  assoc @current-time 
+				   (if-let [comments (get @comments @current-time)] 
+				     (conj comments a-comment)
+				     (list a-comment)))))
+			(fn [a] (swap! current-time (fn [_] a )))
+			))
 
 
-(defn add-perfmon-from [database filename]
-  (with-open [input (reader filename)]
-    (doall
-     (map (fn [line] 
-	    (create-obj line)) 
-		(line-seq input)))
-    ))
+(defn stop 
+  "Stop signal is expected to be a atom of boolean fn []"
+  [stop-signal]
+  (swap! stop-signal (fn [_] (fn [] true))))
+
+(defn add-perfmon-from 
+  ([database comments source stop-signal]
+     (let [names (ref {})
+	   current-time (atom nil)]
+       (with-open [input (reader source)] 
+	 (loop [data (line-seq input)] 
+	   (when (not (@stop-signal))
+	     (create-obj (first data) names database current-time comments)
+	     (when-let [more (next data)]
+	       (recur more)))))))
+  ([database comments source]
+     (add-perfmon-from database comments source (atom (fn [] false)))))
 
 
-(defn dissoc-first-found 
-"Returns m with the first element found in both m and s removed"
-  [m s]
-  (loop [s s]
-    (if ((first s) m) 
-      (dissoc m (first s))
-      (when (next s)
-	(recur (rest s))))))
+(defn perfmon-connection 
+"Returns a closure that will try to open a TCP connection to address and port and to a perfmon server and collect perfmon data from it. The stop-signl is expected to be atom of a bool fn. the clojure will return when stop-signal is false"
+;TODO make arities that sets filters
+  [database comments adress port stop-signal]
 
-(defn name-counter 
-  [ input names-db fieldspec name]
-  (loop [s {} ids {} fields fieldspec]
-    (if-let [field (first fields)]
-      (if-let [id (field input)]
-	(let [currentid (assoc ids field id)
-	      restofFields (rest fields)
-	      next-s  (assoc s field (get names-db currentid))]
-	  (recur next-s
-		 currentid 
-		 restofFields))
-	(assoc s field name))
-      (do (println "null") nil))))
+  #(with-open [socket (Socket. adress port)
+	      output (PrintWriter. (. socket getOutputStream) true)
+	      input (. socket getInputStream)]
+     (. output println "start")
+     (add-perfmon-from database comments input stop-signal)))
 
-(deftest test-name-counter []
-  (let [db
-	{{:host 2} "myhost", 
-	 {:host 2, :category 4} "mycat", 
-	 {:host 2, :category 4, :counter 5} "mycount"}]
-    
-    (is (= 
-	 (name-counter 
-	  (dissoc-first-found {:host 2 :category 4 :counter 6} 
-			      (reverse perfmon-columns)) 
-	  db 
-	  perfmon-columns
-	  "olle")
-	 {:host "myhost" :category "mycat" :counter "olle"}
-	 ) 
-	"adding a counter"))
-
-  (is (= {:1 1} (name-counter {} {} [:1 ] 1)) "soleley one")
-  (is (= nil (name-counter {} {} [] 1)) "is nil")
-  (let [db {:1 1}]
-    (is (= 
-	 {:1 1} 
-	 (name-counter 
-	  (dissoc-first-found { :1 1 } [:1]) 
-	  db
-	  [:1]
-	  1))
-	 "one")))
+(defn start-collecting-perfmon-in-tread
+  "Starts collecting and returns a stopper"
+  [database comments adress port]
+  (let [stopper (atom (fn [] false))
+	f (perfmon-connection database comments adress port stopper)
+	thread (Thread. f (str "Perfmon collector " adress ":" port))]
+    (. thread start )
+    stopper))

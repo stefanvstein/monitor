@@ -1,5 +1,5 @@
 (ns se.sj.monitor.perfmon 
- ; (:gen-class)
+  (:use clojure.test)
   (:import (java.text SimpleDateFormat ParseException)))
 
 (def perfmon-columns (list :host :category :counter :instance))
@@ -15,7 +15,7 @@
 	{:address address :value value}))))
 
  
-(defn parse-perfmon-string [line onStructure onData onInfo onTime names]
+(defn parse-perfmon-string [line onStructure onData onInfo onTime]
   (when-let [line-match (re-matches #"([DCTI])\s(.+)" line)]
     (let [type (second line-match),
 	  value (last line-match)]
@@ -31,34 +31,30 @@
       (catch ParseException _)
       (catch NumberFormatException _)))))
 
-(defn testme []
-  (when-not (= 
-	     (list {:counter 2, :category 1, :host 0} 34) 
-	     (parse-perfmon-string "D 0.1.2 34" 
-				   nil 
-				   (fn [adr val] (list adr val)) 
-				   nil 
-				   nil
-				   nil))
-    (println "Ooops"))
-  (when-not (= 
-	     (list {:counter 2, :category 1, :host 0 :instance 4} "34")
-	     (parse-perfmon-string "C 0.1.2.4 34" 
-				   (fn [adr val] (list adr val))
-				   nil
-				   nil
-				   nil
-				   nil))
-    (println "Ooops"))
-  (when-not (= "Olle was here" 
-	       (parse-perfmon-string "I Olle was here" 
-				     nil
-				     nil
-				     (fn [com] com)
-				     nil))
-    (println "Ooops"))
+(deftest test-perfmon
+  (is (= (list {:counter 2, :category 1, :host 0} 34) 
+	 (parse-perfmon-string "D 0.1.2 34" 
+			       nil 
+			       (fn [adr val] (list adr val)) 
+			       nil 
+			       nil))
+    "Data line")
+  (is (= (list {:counter 2, :category 1, :host 0 :instance 4} "34")
+	 (parse-perfmon-string "C 0.1.2.4 34" 
+			       (fn [adr val] (list adr val))
+			       nil
+			       nil
+			       nil))
+
+    "Create line")
+  (is (= "Olle was here" 
+	 (parse-perfmon-string "I Olle was here" 
+			       nil
+			       nil
+			       (fn [com] com)
+			       nil))
+    "Info line")
   (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss") ]
-	(when-not (= (. df parse "2007-01-27 12:34:16" )
-		     (parse-perfmon-string "T 20070127 123416" nil nil nil (fn [t] t) nil))
-	  (println "Ooops")
-)))
+	(is (= (. df parse "2007-01-27 12:34:16" )
+	       (parse-perfmon-string "T 20070127 123416" nil nil nil (fn [t] t)))
+	    "time line")))
