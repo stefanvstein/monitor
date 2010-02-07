@@ -12,19 +12,18 @@
 (defn- object-names [server]
   (. server queryNames nil nil))
 
-(defn- collector-names-and-beans 
+(defn- collector-beans 
   [server]
   (reduce #(if-let [match  
-		      (re-matches #"java.lang:type=GarbageCollector,name=(.*)" (. %2 toString))] 
-	     (assoc %1 
-	       (second match) 
+		      (re-matches #"java.lang:type=GarbageCollector,name=.*" (. %2 toString))] 
+	     (conj %1 
 	       (. JMX newMXBeanProxy server %2 GarbageCollectorMXBean))
 	     %1) 
-	  {}
+	  []
 	  (object-names server)))
 
 (defn- collector-stat
-  [collector-name collectorBean]
+  [collectorBean]
   (let [hostname (remote-hostname) 
 	vm (vmname)
 	collectorname (. collectorBean getName)]
@@ -45,7 +44,7 @@
 (defn std
   [database comments]
   (fn [server]
-    (let [collectors (collector-names-and-beans server)]
+    (let [collectors (collector-beans server)]
       (let [the-time (remote-time)]
 
 	(dosync 
@@ -56,12 +55,12 @@
 		 :counter "UpTime"} 
 		the-time 
 		(remote-uptime *current-runtime-bean* TimeUnit/SECONDS))
-	 (dorun (map #(let [data (collector-stat % (get collectors %))
+	 (dorun (map #(let [data (collector-stat %)
 			    count-data (first data) 
 			    time-data (second data)]
 			(alter database add (first count-data) the-time (second count-data))
 			(alter database add (first time-data) the-time (second time-data)))
-		     (keys collectors))))))))
+		     (seq collectors))))))))
 
 
   
