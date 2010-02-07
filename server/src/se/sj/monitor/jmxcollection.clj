@@ -13,11 +13,18 @@
   (. server queryNames nil nil))
 
 (defn- collector-beans 
-  [server]
+  [server comments]
   (reduce #(if-let [match  
 		      (re-matches #"java.lang:type=GarbageCollector,name=.*" (. %2 toString))] 
-	     (conj %1 
-	       (. JMX newMXBeanProxy server %2 GarbageCollectorMXBean))
+	     (let [bean (. JMX newMXBeanProxy server %2 GarbageCollectorMXBean)
+		   timestamp (remote-time)
+		   comment   (with-out-str 
+				 (print (str "Garbage Collector \"" (. bean getName) "\" collecting "))
+				 (dorun (map (fn [a] (print (str a ", "))) 
+					     (seq (. bean getMemoryPoolNames)))) 
+				 (print (str "was found in " (vmname) " at " (remote-hostname))))]
+	       (dosync (alter comments assoc timestamp comment))
+	       (conj %1 bean))
 	     %1) 
 	  []
 	  (object-names server)))
@@ -26,7 +33,9 @@
   [collectorBean]
   (let [hostname (remote-hostname) 
 	vm (vmname)
-	collectorname (. collectorBean getName)]
+	collectorname (. collectorBean getName)
+
+]
     (list [{:host hostname 
 	    :jvm vm 
 	    :category "GarbageCollector" 
@@ -44,7 +53,7 @@
 (defn std
   [database comments]
   (fn [server]
-    (let [collectors (collector-beans server)]
+    (let [collectors (collector-beans server comments)]
       (let [the-time (remote-time)]
 
 	(dosync 
