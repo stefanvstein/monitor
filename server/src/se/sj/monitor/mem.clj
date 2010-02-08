@@ -41,6 +41,21 @@
   (let [thekeys (filter pred (keys database))]
     (select-keys database thekeys)))
 
+(defn with-keys-between
+  "Returns a sub-database where keys are between lower (inclusive) and upper (exclusive) bounds"
+  [database lower upper]
+ 
+  (reduce (fn [newdb kv-from-old] 
+	    (assoc newdb (key kv-from-old)
+		   (reduce  (fn [new-sorted kv-within] 
+			      (assoc new-sorted 
+				(first kv-within) 
+				(second kv-within))) 
+			    (sorted-map)   
+			    (subseq (val kv-from-old) >= lower <  upper))))
+	  {} 
+	  database))
+
 (defn key-shifted
   "Returns sorted-map of entries in mapp, but with keys shifted with unary fn shift" 
  [mapp shift]
