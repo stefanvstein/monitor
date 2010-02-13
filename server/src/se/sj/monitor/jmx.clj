@@ -16,7 +16,6 @@
 (def *vmname* (. *current-runtime-bean* getName))
 (def *current-host* (. (. InetAddress getLocalHost) getCanonicalHostName))
 (def known-hosts (atom {}))
-
 (defn remote-time 
   ([runtime]
      (let [  remoteTimeMs (+ (. runtime getStartTime) (. runtime getUptime))] 
