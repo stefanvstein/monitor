@@ -3,7 +3,7 @@
 (:use (se.sj.monitor mem perfmon))
 (:import (java.io IOException BufferedReader FileReader InputStreamReader PrintStream) 
 	 (java.net Socket SocketException )))
-
+"Records data from a perfmon telnet server"
 (defn close-in [closeable time] 
 (Thread/sleep time)
 (. closeable close))

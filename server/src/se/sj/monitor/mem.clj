@@ -1,5 +1,6 @@
 (ns se.sj.monitor.mem 
-  (:use clojure.test))
+  (:use clojure.test)
+  (:use clojure.inspector))
 
 ;This name space contain functions for delaing with databases represented by a map of sorted maps
 ;In general the following conventions are used:
@@ -55,6 +56,11 @@
 			    (subseq (val kv-from-old) >= lower <  upper))))
 	  {} 
 	  database))
+
+(defn where-name-with-keys-between [database pred lower upper]
+  "Combo of where-name and with-keys-between"
+  (let [named (where-name database pred)]
+    (with-keys-between named lower upper)))
 
 (defn key-shifted
   "Returns sorted-map of entries in mapp, but with keys shifted with unary fn shift" 
@@ -155,3 +161,26 @@
 	   "Örjan" {4 5}, 
 	   "Olle" { 2 54 3 45}}
        @data) "with-keys-shifted for those that has names starting with \"N\"")))
+
+(deftest test-name-and-between
+  (let [df #(. (java.text.SimpleDateFormat. "yyyyMMdd-HH") parse % )
+	data {"Nilkas" (sorted-map (df "20070101-12") 23.3,
+				   (df "20070102-12") 23.4,
+				   (df "20070103-12") 23.5,
+				   (df "20070104-12") 23.6,
+				   (df "20070105-12") 23.7),
+	      "Arne" (sorted-map (df "20070100-12") 13,
+				 (df "20070102-12") 14,
+				 (df "20070104-12") 15,
+				 (df "20070106-12") 16),
+	      "Nils" (sorted-map (df "20070102-12") 5/3,
+				 (df "20070104-12") 6/7,
+				 (df "20070106-12") 1)}]
+    (let [result (where-name-with-keys-between data 
+		   #(. % startsWith "N") 
+		   (df "20070103-06") 
+		   (df "20070105-14"))]
+      (is (= #{23.5 23.6 23.7 6/7} 
+	     (reduce #(apply conj %1 (vals %2)) 
+		     #{} 
+		     (vals result)))))))

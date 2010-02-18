@@ -7,7 +7,12 @@
   (:import java.util.Date)
   (:import [com.sleepycat.je OperationStatus DatabaseException]))
 
-(declare *db* *db-env* *next-key* *indices*)
+(def *db* nil)
+(def *db-env* nil) 
+(def *next-key* nil)
+(def *indices* nil)
+
+(defonce date-format "yyyyMMdd")
 
 (defn incremental-key 
 "For internal use, but public for use in macro using-db"
@@ -110,7 +115,7 @@
 ;    (throw (IllegalArgumentException. (str indexed-key " is not a key in database.")))))
 
 (defn all-in-every 
-  "Calls fun with a lazy seq of all emlements according to keys-and-data. That is, pairs indexed keywords and expected values. Keywords are distinct. The cursor closes after fun. That is, seq passed to fun is no longer valid after fun" 
+  "Returns result of calling fun with a lazy seq of all emlements according to keys-and-data. That is, pairs indexed keywords and expected values. Keywords are distinct. The cursor closes after fun. That is, seq passed to fun is no longer valid after fun" 
   [fun & keys-and-data] 
   (let [indexes-and-data (apply hash-map keys-and-data)
 	is-valid-indexes #(reduce (fn [b index] 
@@ -189,7 +194,7 @@
       
     (let [data (assoc keys 
 		 :time time 
-		 :date (. (SimpleDateFormat. "yyyyMMdd") format time) 
+		 :date (. (SimpleDateFormat. date-format) format time) 
 		 :value value)]
       (db-put db (next-key) data)))
 
@@ -244,11 +249,12 @@
 	       (all-in-every #(is (= 7 (count %)) "7 Nils") :nisse "Nils")
 	       (all-in-every #(is (= 9 (count %)) "9 20070101") :date "20070101")
 	       (all-in-every #(is (=  36.7 (nth  (first %) 2))) :date "20070102")
-	       (all-in-every #(is (=  #{35.5 36.5} (reduce (fn [s v] 
+	       (println (str "-----" (all-in-every #(nth (first %) 2) :date "20070102")))
+	       (is (= #{35.5 36.5} (all-in-every #(reduce (fn [s v] 
 							     (conj s (nth v 2))) 
 							   #{} 
-							   %))) 
-			     :date "20070101" :olle "Arne")
+							   %)
+			     :date "20070101" :olle "Arne")))
 	       (remove-from-db :date "20070102")
 	       (all-in-main #(is (= 9 (count %)) "all is 9"))
  	       (remove-from-db :date "20060102")
@@ -265,8 +271,9 @@
 
 	       (remove-until-from-db :date "20070103")
 
-	        (all-in-main #(is (= 1 (count %)) "all is 1"))
-	       (all-in-main #(is (=  37.5 (nth  (first %) 2))))
+	         #(is (= 1 (all-in-main (count %)) "all is 1"))
+	       (is (= 37.5 (all-in-main #(nth  (first %) 2))))
+	      
 
 	       )
      (finally (rmdir-recursive tmp)))))

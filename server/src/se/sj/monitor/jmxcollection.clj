@@ -1,7 +1,8 @@
 (ns se.sj.monitor.jmxcollection
   (:use (se.sj.monitor mem jmx) )
   (:import (java.util.concurrent TimeUnit)
-  (javax.management JMX ObjectName)  (java.lang.management GarbageCollectorMXBean))
+	   (javax.management JMX ObjectName)  
+	   (java.lang.management GarbageCollectorMXBean))
 	   
 					; for testing purposes
   (:use clojure.test)
@@ -51,6 +52,7 @@
 
  
 (defn std
+"Returns a fn to that collects java 6 metrics and store them to a database"
   [database comments]
   (fn [server]
     (let [collectors (collector-beans server comments)]

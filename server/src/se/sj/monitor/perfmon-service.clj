@@ -1,4 +1,4 @@
-(ns se.sj.monitor.server
+(ns se.sj.monitor.perfmon-service
   (:use (se.sj.monitor mem perfmon names) )
   (:use [clojure.contrib.duck-streams :only (reader)] )
   (:import (java.net Socket) (java.io PrintWriter))
@@ -12,6 +12,7 @@
 (def comments (atom {}))
 
 (defn causes [#^java.lang.Throwable e] (take-while #(not (nil? %)) (iterate #(when % (. % getCause)) e)))
+
 (defn- create-obj [line perfmon-names perfmon-data current-time comments]
   (parse-perfmon-string line 
 			(fn [identifier name] 
