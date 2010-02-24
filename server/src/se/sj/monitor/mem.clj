@@ -23,11 +23,24 @@
        (sorted-map key value))))
 
 (defn add
-  "Returns database with key and value added to the sorted-map associated with name"
+  "Returns database with key and value added to the sorted-map associated with name. Or, with all entries found in another-database added."
   ([database name key value]
-     (assoc database name (added-to database name key value)))
+    (assoc database name (added-to database name key value)))
   ([database name kvs]
-     (assoc database name (added-to database name kvs))))
+     (assoc database name (added-to database name kvs)))
+  ([database another-database]
+     (reduce (fn [db new-data]
+	       (add db 
+		(first new-data) 
+		(first (second new-data)) 
+		(second (second new-data)))) 
+	     database 
+	     (reduce (fn [data a-key] 
+		       (apply conj data 
+			     (map #(list a-key %)
+				  (seq (get another-database a-key)))))
+		     [] 
+		     (keys another-database)))))
 
 
 (defn by-name
@@ -143,6 +156,15 @@
 	  "Olle" { 2 54 3 45}} 
 	 @data) 
       "Additional data added")))
+(deftest addind-another
+  (let [db {"Niklas" {1 2, 2 4, 3 6}
+	   "Örjan" {45 0.3, 46 0.4, 47 0.5}}
+       another {"Niklas" {2 8, 4 16}
+		"Sture" {1 1, 2 2, 3 4}}]
+    (is (= {"Niklas" {1 2, 2 8, 3 6, 4 16}
+	    "Örjan" {45 0.3, 46 0.4, 47 0.5}
+	    "Sture" {1 1, 2 2, 3 4}}
+	   (add db another)) "Adding another")))
 
 (deftest test-shifting
   (let [data (ref {"Niklas" {4 5, 6 76, 8 65, 44 5}, 
