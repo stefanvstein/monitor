@@ -1,5 +1,5 @@
 (ns se.sj.monitor.jmxcollection
-  (:use (se.sj.monitor mem jmx) )
+  (:use (se.sj.monitor database jmx) )
   (:import (java.util.concurrent TimeUnit)
 	   (javax.management JMX ObjectName)  
 	   (java.lang.management GarbageCollectorMXBean))
@@ -34,9 +34,7 @@
   [collectorBean]
   (let [hostname (remote-hostname) 
 	vm (vmname)
-	collectorname (. collectorBean getName)
-
-]
+	collectorname (. collectorBean getName)]
     (list [{:host hostname 
 	    :jvm vm 
 	    :category "GarbageCollector" 
@@ -52,27 +50,56 @@
 
  
 (defn std
-"Returns a fn to that collects java 6 metrics and store them to a database"
-  [database comments]
+"Returns a fn to that collects java 6 metrics and store them to database, assuming one is set"
+  [comments]
   (fn [server]
     (let [collectors (collector-beans server comments)]
       (let [the-time (remote-time)]
 
-	(dosync 
-	 (alter database add 
-		{:host (remote-hostname) 
-		 :jvm (vmname) 
-		 :category "Runtime" 
-		 :counter "UpTime"} 
-		the-time 
-		(remote-uptime *current-runtime-bean* TimeUnit/SECONDS))
+	  (add-data 
+	   {:host (remote-hostname) 
+	    :jvm (vmname) 
+	    :category "Runtime" 
+	    :counter "UpTime"}
+	   the-time (remote-uptime *current-runtime-bean* TimeUnit/SECONDS))
+	  
+		
 	 (dorun (map #(let [data (collector-stat %)
 			    count-data (first data) 
 			    time-data (second data)]
-			(alter database add (first count-data) the-time (second count-data))
-			(alter database add (first time-data) the-time (second time-data)))
-		     (seq collectors))))))))
+			(add-data (first count-data) the-time (second count-data))
+			(add-data (first time-data) the-time (second time-data)))
+		     (seq collectors)))))))
 
+(deftest test-local-std
+  (if-let [jmxport (Integer/parseInt (System/getProperty "com.sun.management.jmxremote.port"))]
+    (using-live 
+     (let [comments (ref {})
+	   stdfn (std comments)]
+       (using-jmx 
+	jmxport 
+	(fn [server]
+	  (stdfn server)
+	  (stdfn server)
+
+	  (println (data-by (fn [_] true)))
+	  (let [collector-time (data-by (fn [i] 
+					  (and (= (:category i) "GarbageCollector") 
+					       (= (:counter i) "Time"))))
+		time-values (vals (val (first collector-time)))]
+	    (is (= 2 (count time-values)))
+	    (is (<= (first time-values) (second time-values))))
+	  (let [collector-count (data-by (fn [i] 
+					   (and (= (:category i) "GarbageCollector") 
+						(= (:counter i) "Count"))))
+		count-values (vals (val (first collector-count)))]
+	    (is (= 2 (count count-values)))
+	    (is (<= (first count-values) (second count-values))))
+	  (let [uptime (data-by (fn [i] (= (:counter i) "UpTime"))) 
+		uptime-values (vals (val (first uptime)))]
+	    (is (= 2 (count uptime-values)))
+	    (is (<= (first uptime-values) (second uptime-values))))))))
+    (is nil "No com.sun.management.jmxremote.port")))
 
   
   

@@ -372,5 +372,20 @@
 		      (is (= 1 (count result)) "Only one with sladd")
 		      (is (= {:host "Arne" :category "Nisse" :sladd "Olle"}  (key (first result))))))
      (finally (rmdir-recursive tmp)))))
-      
+
+(deftest test-nothing-bound
+  (is (nil? (add-data {:host "Arne" :category "Nisse" :sladd "Olle"} 
+	    (java.util.Date.)  
+	    34)))
+  (is (nil? (data-by (java.util.Date.) 
+	   (java.util.Date.) 
+	   :host "Arne" :host "Lennart" :sladd "Olle")))
+  (is (nil? (data-by (fn [_] true))))
+  (is (nil? (names-where (fn [_] true) 
+	       (java.util.Date.) 
+	       (java.util.Date.))))
+  (is (nil? (names-where (fn [_] true))))
+  (is (nil? (clean-live-data-older-than (java.util.Date.)))))
+  
+
 
