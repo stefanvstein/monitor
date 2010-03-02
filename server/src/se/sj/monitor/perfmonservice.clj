@@ -1,4 +1,4 @@
-(ns se.sj.monitor.perfmon-service
+(ns se.sj.monitor.perfmonservice
   (:use (se.sj.monitor database perfmon names) )
   (:use [clojure.contrib.duck-streams :only (reader)] )
   (:import (java.net Socket) (java.io PrintWriter))
@@ -25,7 +25,7 @@
 					;		   value))))
 			    (add-data (get-name perfmon-names identifier) 
 					   @current-time 
-					   value)
+					   value)))
 			(fn [a-comment] 
 			  (when @current-time 
 			    (swap! comments  assoc @current-time 
@@ -58,13 +58,23 @@
 (defn perfmon-connection 
 "Returns a closure that will try to open a TCP connection to address and port and to a perfmon server and collect perfmon data from it. The stop-signl is expected to be atom of a bool fn. the clojure will return when stop-signal is false"
 ;TODO make arities that sets filters
-  [comments adress port stop-signal]
+ ([comments adress port stop-signal]
 
   #(with-open [socket (Socket. adress port)
 	      output (PrintWriter. (. socket getOutputStream) true)
 	      input (. socket getInputStream)]
      (. output println "start")
      (add-perfmon-from comments input stop-signal)))
+ ([comments adress port stop-signal hosts-exp categories-exp counters-exp instances-exp]
+  #(with-open [socket (Socket. adress port)
+	      output (PrintWriter. (. socket getOutputStream) true)
+	      input (. socket getInputStream)]
+     (. output println (str "hosts " hosts-exp))
+     (. output println (str "categories " categories-exp))
+     (. output println (str "counters " counters-exp))
+     (. output println (str "instances " instances-exp))
+     (. output println "start")
+     (add-perfmon-from comments input stop-signal))))
 
 (defn start-collecting-perfmon-in-tread
   "Starts collecting and returns a stopper"

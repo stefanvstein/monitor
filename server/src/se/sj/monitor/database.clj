@@ -4,10 +4,10 @@
   (:use cupboard.utils))
 
 "A wrapper around live data and persistent store"
-(def *live-data* nil)
+(def *live-data* (ref {}))
 
 (defmacro using-live
-  "A binding around using live data" 
+  "A binding around using another live data" 
   [& form]
   `(binding [*live-data* (ref {})]
      (do ~@form)))
@@ -26,16 +26,16 @@
   "Adding data to the store, live if bound, and history if bound. Name is expected to be a map of keyword and string value, possibly used as indices of the data. Time-stamp is expected to be a Date object."
   [name time-stamp value]
   {:pre [(instance? java.util.Date time-stamp)]}
-  (when *live-data* 
+  (when @*live-data* 
     (dosync (alter *live-data* add name time-stamp value)))
-  (when *db* 
+  (when @*db* 
     (add-to-db value time-stamp name)))            ;använd seque
 
 (defn clean-live-data-older-than 
   "Remove data in live-data that has timestamp older than timestamp. Removes empty rows"
   [timestamp]
   {:pre [(instance? java.util.Date timestamp)]}
-  (when *live-data*
+  (when @*live-data*
     (dosync
      (alter *live-data* remove-from-each-while #(< (.getTime %) (.getTime timestamp)))
      (alter *live-data* dissoc empty-names @*live-data*))))
@@ -61,7 +61,7 @@
 
 (defn names-where 
   ([pred]
-     (when *live-data*
+     (when @*live-data*
        (filter pred (keys @*live-data*))))
   ([pred lower upper]
      {:pre [(instance? java.util.Date lower)
@@ -151,7 +151,7 @@
 (defn data-by 
   ([lower upper & name-spec]
   {:pre [(= java.util.Date (class lower) (class upper))]}
-  (when-not (nil? *db*)
+  (when-not (nil? @*db*)
     (if (> (. lower getTime) (. upper getTime))
       nil
       (do
@@ -185,7 +185,7 @@
 		  from-db (fored from-db needs)))))))
 
   ([pred]
-     (when *live-data*
+     (when @*live-data*
        (where-name @*live-data* pred))))
 
 (deftest test-names-where-one
@@ -319,6 +319,7 @@
 
 
 (deftest test-db-only
+  (binding [*live-data* (ref nil)]
   (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)
 	tmp (make-temp-dir)]
@@ -371,9 +372,10 @@
 					  :host "Arne" :host "Lennart" :sladd "Olle")]
 		      (is (= 1 (count result)) "Only one with sladd")
 		      (is (= {:host "Arne" :category "Nisse" :sladd "Olle"}  (key (first result))))))
-     (finally (rmdir-recursive tmp)))))
+     (finally (rmdir-recursive tmp))))))
 
 (deftest test-nothing-bound
+  (binding [*live-data* (ref nil)]
   (is (nil? (add-data {:host "Arne" :category "Nisse" :sladd "Olle"} 
 	    (java.util.Date.)  
 	    34)))
@@ -385,7 +387,7 @@
 	       (java.util.Date.) 
 	       (java.util.Date.))))
   (is (nil? (names-where (fn [_] true))))
-  (is (nil? (clean-live-data-older-than (java.util.Date.)))))
+  (is (nil? (clean-live-data-older-than (java.util.Date.))))))
   
 
 

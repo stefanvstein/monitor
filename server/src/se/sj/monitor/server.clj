@@ -31,7 +31,9 @@
 	      (iterate #(when % (. % getCause)) 
 		       e)))
 (defonce serve-call-count (atom 0))
-
+(def *serve-options* {:seconds-until-interrupt 10
+		      :seconds-after-interrupt 10
+		      :restart-pause 1})
 (defn serve 
 ([]
    (swap! serve-call-count #(inc %)) 
@@ -81,7 +83,9 @@
 		    
 		    (send-off restart-agent (fn [_] 
 					      (try
-					       (Thread/sleep (* 1 1000))
+					       
+					       (Thread/sleep 
+						(* (:restart-pause *serve-options*) 1000))
 					       (catch InterruptedException _)) 
 					      (dosync (alter tasks-to-start conj task))
 					      ))))
@@ -100,7 +104,9 @@
 	(info "Shutting down")
 	(. executor shutdown)
 	(try
-	 (. executor awaitTermination 10 TimeUnit/SECONDS) ;throws handled
+	 (. executor awaitTermination 
+	    (:seconds-until-interrupt *serve-options*) 
+	    TimeUnit/SECONDS) ;throws handled
 	 (catch InterruptedException e))
 	(when-not (. executor isTerminated)
 	  (dorun (map (fn [not-started]
@@ -110,7 +116,8 @@
 			   (alter stopped-tasks conj task))))
 		      (. executor shutdownNow)))
 	  (let [done (atom false)
-		until (+ (System/currentTimeMillis) 10000)]
+		until (+ (System/currentTimeMillis) 
+			 (* 1000 (:seconds-after-interrupt *serve-options*)))]
 	    (while (not @done)
 		   (try
 		    (. executor awaitTermination 
@@ -142,16 +149,20 @@
 	(when (> 0 (count @running-tasks))
 	  (info (str "serve ends with " (count @running-tasks) " running tasks"))))
       (finally (swap! current-server (fn [_] nil))
-	       (swap! stop-signal ( fn [_] false)))
+	       (swap! stop-signal (fn [_] false))
+	       (info "Is down"))
+      
       ))))
    
-([tasks-to-run]
+([tasks-to-run & options]
    (when-not @stop-signal
-     (dosync (ref-set tasks-to-start (hash-set)))
-     (dorun (map (fn [to-run]
-	    (dosync (alter tasks-to-start conj to-run)))
-	  tasks-to-run))
-   (serve))))
+     (binding [*serve-options* (merge *serve-options* 
+				      (apply hash-map options))] 
+       (dosync (ref-set tasks-to-start (hash-set)))
+       (dorun (map (fn [to-run]
+		     (dosync (alter tasks-to-start conj to-run)))
+		   tasks-to-run))
+       (serve)))))
 
 (defn- debug-info
   ([mes]
@@ -166,7 +177,6 @@
 
 
 (deftest test-serve
-(comment
   (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))]  
     (binding [info debug-info]
@@ -185,7 +195,7 @@
 	(is (re-matches #"Shutting down\s" r))
 	(is (re-matches #"((Hej)|(Hoj)){4,}" @res)))))
 
-(let [res (atom "")
+  (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))
 	fn2 #(swap! res (fn [v] (throw (IllegalArgumentException. "Test"))))]  
     (binding [info debug-info]
@@ -194,18 +204,14 @@
       (let [r (with-out-str (serve [fn1 fn2]))]
 	(is (re-find #"(?s)(.*Task died with exception.*IllegalArgumentException: Test){2,}.*Shutting down\s" r))
 	(is (re-matches #"(Hej){2,}" @res)))))
-)
+
 (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))
-	fn2 #(Thread/sleep 12000)]  
+	fn2 #(Thread/sleep 3000)]  
     (binding [info debug-info]
       (.start (Thread. #(do (Thread/sleep 1000)
 			    (stop))))
-      (let [r (with-out-str (serve [fn1 fn2]))]
-	(println r)
-	(newline)
-	(println @res))))
-  
-
-  )
+      (let [r (with-out-str (serve [fn1 fn2] :seconds-until-interrupt 1 :seconds-after-interrupt 1))]
+	(is (re-find #"(?s).*Shutting down.*InterruptedException.*sleep interrupted" r))
+	(is (re-matches #"(Hej){1,}" @res))))))
 

@@ -7,10 +7,10 @@
   (:import java.util.Date)
   (:import [com.sleepycat.je OperationStatus DatabaseException]))
 
-(def *db* nil)
-(def *db-env* nil) 
-(def *next-key* nil)
-(def *indices* nil)
+(def *db* (ref nil))
+(def *db-env* (ref nil)) 
+(def *next-key* (ref nil))
+(def *indices* (ref nil))
 
 (defonce date-format "yyyyMMdd")
 
@@ -23,34 +23,47 @@
 		     (if (empty? last-entry)
 		       0
 		       (inc (first last-entry))))))]
-       #(dec (swap! the-next-key inc))))
-  ([]
-     (incremental-key *db*)))
-
-(defn using-db-fn
-  "A fn version of using-db"
-  [path db-name indexed-keywords f]
-  (binding [*db-env* (db-env-open path :allow-create true  :transactional true :txn-no-sync true)]
-    (try 
-     (binding [*db* (db-open *db-env* db-name :allow-create true)]
-       (try 
-	(binding [*next-key* (incremental-key *db*)]
-	  (binding [*indices* (reduce 
-			       #(assoc %1 %2 
-				       (db-sec-open *db-env* 
-						    *db* 
-						    (name %2) 
-						    :allow-create true 
-						    :sorted-duplicates true
-						    :key-creator-fn %2)) 
-			       {} indexed-keywords )]
-	    (try
-	     (f)
-	     (finally (dorun (map #(db-sec-close %) (vals *indices*)))))))
-	(finally (db-close *db*))))
-     (finally (db-env-close *db-env*)))))
+       #(dec (swap! the-next-key inc)))))
 
 (defmacro using-db
+  "Defines the database to use, that will be closed after body. Path is directory path to db store, dn-name is the name of the db, and indexed-keyword are keywords in data that will be indexed."
+  [path db-name indexed-keywords & body]
+  `(when-let [db-env# (db-env-open ~path :allow-create true  :transactional true :txn-no-sync true)]
+     (try
+	(when-let [db# (db-open db-env# ~db-name :allow-create true)]
+	  (try
+
+	   (let [next-key# (incremental-key db#)]
+	     (when-let [indices# (reduce (fn [m# v#] 
+					   (assoc m# v# 
+						  (db-sec-open db-env# 
+							       db# 
+							       (name v#) 
+							       :allow-create true 
+							       :sorted-duplicates true
+							       :key-creator-fn v#))) 
+					 {} ~indexed-keywords )]
+	       (try
+		(dosync
+		 (ref-set *db-env* db-env#)
+		 (ref-set *db* db#)
+		 (ref-set *next-key* next-key#)
+		 (ref-set *indices* indices#))
+		(try
+		 (do ~@body)
+		 (finally
+		  (dosync
+		   (ref-set *db-env* nil)
+		   (ref-set *db* nil)
+		   (ref-set *next-key* nil)
+		   (ref-set *indices* nil))))
+		 
+		(finally (dorun (map (fn [v#] (db-sec-close v#)) (vals indices#)))))))
+	     (finally (db-close db#))))
+	  (finally (db-env-close db-env#)))))
+
+(comment
+(defmacro using-db2
   "Defines the database to use, that will be closed after body. Path is directory path to db store, dn-name is the name of the db, and indexed-keyword are keywords in data that will be indexed."
   [path db-name indexed-keywords & body]
   `(binding [*db-env* (db-env-open ~path :allow-create true  :transactional true :txn-no-sync true)]
@@ -73,6 +86,7 @@
 	     (finally (dorun (map (fn [v#] (db-sec-close v#)) (vals *indices*)))))))
 	(finally (db-close *db*))))
      (finally (db-env-close *db-env*)))))
+)
 
 (defn- create-structure-as-vector [d]
   (let [time-stamp (:time d)
@@ -95,7 +109,7 @@
 (defn all-in-main 
   "Calls fun with a lazy seq of all emlements in main of *db*. The cursor closes after fun. That is, seq passed to fun is no longer valid after fun" 
   [fun]
-  (with-db-cursor [ cursor *db*]
+  (with-db-cursor [ cursor @*db*]
     (let [fn-argument (fn internal-fn-argument [c]
 	      (let [next-elem (db-cursor-next cursor)] 
 		(if (empty? next-elem) 
@@ -119,13 +133,13 @@
   [fun & keys-and-data] 
   (let [indexes-and-data (apply hash-map keys-and-data)
 	is-valid-indexes #(reduce (fn [b index] 
-				    (if (contains? *indices* index) b false)) 
+				    (if (contains? @*indices* index) b false)) 
 				  true 
 				  (keys indexes-and-data))
 	close-cursor #(db-cursor-close %)
 	close-cursors #(dorun (map close-cursor %))
 	open-cursor (fn [s index-and-data]
-		      (let [cursor (db-cursor-open ((key index-and-data) *indices*))]
+		      (let [cursor (db-cursor-open ((key index-and-data) @*indices*))]
 			(try (if (empty? (db-cursor-search cursor (val index-and-data) :exact true))
 			       (do (close-cursor cursor) 
 				   s)
@@ -199,20 +213,20 @@
       (db-put db (next-key) data)))
 
  ([data time keys]
-    (add-to-db *db* *next-key* data time keys)))
+    (add-to-db @*db* @*next-key* data time keys)))
 
 
 (defn remove-from-db 
   "Removes all entries in db where index indexKey in current set of indices is strictly matching value"
   [indexKey value]
-  (when-let [index (indexKey *indices*)]
+  (when-let [index (indexKey @*indices*)]
     (db-sec-delete index value)))
 
 (defn remove-until-from-db 
 "Removes all entries that index indexKey, in current set of indices, is currently less than value"
 [indexKey value]
-  (when-let [index (indexKey *indices*)]
-    (with-db-txn [txn *db-env*]
+  (when-let [index (indexKey @*indices*)]
+    (with-db-txn [txn @*db-env*]
       (with-db-cursor [cursor index :txn txn]
 	(while (let [record  (do (db-cursor-first cursor))]
 		 (if (empty? record)
