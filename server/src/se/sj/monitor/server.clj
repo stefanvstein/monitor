@@ -10,6 +10,11 @@
      (clojure.contrib.logging/info message))
   ([message exception]
      (clojure.contrib.logging/info message exception)))
+(defn error
+  ([message]
+     (clojure.contrib.logging/error message))
+  ([message exception]
+     (clojure.contrib.logging/error message exception)))
 
 (def current-server (atom nil))
 
@@ -33,7 +38,7 @@
 (defonce serve-call-count (atom 0))
 (def *serve-options* {:seconds-until-interrupt 10
 		      :seconds-after-interrupt 10
-		      :restart-pause 1})
+		      :restart-pause 60})
 (defn serve 
 ([]
    (swap! serve-call-count #(inc %)) 
@@ -67,7 +72,7 @@
 			 (let [chain (causes e)]
 			   (cond
 			    (some #(instance? java.util.concurrent.ExecutionException %) chain)
-			    (info "Task died with exception." 
+			    (error "Task died with exception." 
 				  (. (some 
 				      #(if (instance? java.util.concurrent.ExecutionException %)
 					 % nil) chain) 
@@ -80,15 +85,14 @@
 		     (alter running-tasks dissoc stopped)
 		     (alter stopped-tasks conj task))
 					;guess this could spawn many threads
-		    
-		    (send-off restart-agent (fn [_] 
+		    (let [pause (:restart-pause *serve-options*)]
+		      (send-off restart-agent (fn [_] 
 					      (try
-					       
 					       (Thread/sleep 
-						(* (:restart-pause *serve-options*) 1000))
+						(* pause 1000))
 					       (catch InterruptedException _)) 
 					      (dosync (alter tasks-to-start conj task))
-					      ))))
+					      )))))
 		
 		(dorun (map (fn [c] 
 			      (let [future (. executor-service submit #^Callable c)]
@@ -137,7 +141,7 @@
 			    (let [chain (causes e)]
 			      (cond
 			       (some #(instance? java.util.concurrent.ExecutionException %) chain)
-			       (info "Task died with exception." 
+			       (error "Task died with exception." 
 				     (. (some 
 					 #(if (instance? java.util.concurrent.ExecutionException %)
 					    % nil) chain) 
@@ -173,17 +177,27 @@
      (println (. (Thread/currentThread) getName))
      (. ex printStackTrace (java.io.PrintWriter. *out* true)))) 
 
+(defn- debug-error
+  ([mes]
+     (println mes))
+  ([mes ex]
+     (println mes)
+     (println (. ex getMessage))
+     (println (. (Thread/currentThread) getName))
+     (. ex printStackTrace (java.io.PrintWriter. *out* true)))) 
+
 
 
 
 (deftest test-serve
   (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))]  
-    (binding [info debug-info]
+    (binding [info debug-info
+	      error debug-error]
       (.start (Thread. #(do (Thread/sleep 4000)
 			    (stop))))
-      (let [r (with-out-str (serve [fn1]))]
-	(is (re-matches #"Shutting down\s" r))
+      (let [r (with-out-str (serve [fn1]  :restart-pause 1))]
+	(is (re-find #"(?s)Shutting down\s" r))
 	(is (re-matches #"(Hej){2,}" @res)))))
   (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))
@@ -191,27 +205,29 @@
     (binding [info debug-info]
       (.start (Thread. #(do (Thread/sleep 4000)
 			    (stop))))
-      (let [r (with-out-str (serve [fn1 fn2]))]
-	(is (re-matches #"Shutting down\s" r))
+      (let [r (with-out-str (serve [fn1 fn2]  :restart-pause 1))]
+	(is (re-find #"Shutting down\s" r))
 	(is (re-matches #"((Hej)|(Hoj)){4,}" @res)))))
 
   (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))
 	fn2 #(swap! res (fn [v] (throw (IllegalArgumentException. "Test"))))]  
-    (binding [info debug-info]
+    (binding [info debug-info
+	      error debug-error]
       (.start (Thread. #(do (Thread/sleep 4000)
 			    (stop))))
-      (let [r (with-out-str (serve [fn1 fn2]))]
+      (let [r (with-out-str (serve [fn1 fn2] :restart-pause 1))]
 	(is (re-find #"(?s)(.*Task died with exception.*IllegalArgumentException: Test){2,}.*Shutting down\s" r))
 	(is (re-matches #"(Hej){2,}" @res)))))
 
 (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))
 	fn2 #(Thread/sleep 3000)]  
-    (binding [info debug-info]
+    (binding [info debug-info
+	      error debug-error]
       (.start (Thread. #(do (Thread/sleep 1000)
 			    (stop))))
-      (let [r (with-out-str (serve [fn1 fn2] :seconds-until-interrupt 1 :seconds-after-interrupt 1))]
+      (let [r (with-out-str (serve [fn1 fn2]  :restart-pause 1 :seconds-until-interrupt 1 :seconds-after-interrupt 1))]
 	(is (re-find #"(?s).*Shutting down.*InterruptedException.*sleep interrupted" r))
 	(is (re-matches #"(Hej){1,}" @res))))))
 

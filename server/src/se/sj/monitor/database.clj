@@ -1,6 +1,7 @@
 (ns se.sj.monitor.database
   (:use [se.sj.monitor db mem])
   (:use clojure.test)
+  (:use clojure.contrib.logging)
   (:use cupboard.utils))
 
 "A wrapper around live data and persistent store"
@@ -187,6 +188,23 @@
   ([pred]
      (when @*live-data*
        (where-name @*live-data* pred))))
+
+(def *comments* (ref (sorted-map)))
+
+(defn add-comment
+  ([time-stamp comment]
+     (when @*comments*
+       (dosync (alter *comments* assoc time-stamp comment)
+	       (while (< 100 (count @*comments*))
+			 (alter *comments* dissoc (key (first @*comments*))))))
+     (info comment))
+  ([comment]
+     (add-comment (java.util.Date.) comment)))
+
+(defn comments 
+  ([] @*comments*)
+  ([from to]
+     (throw (UnsupportedOperationException. "Currently not implemented"))))
 
 (deftest test-names-where-one
   (let [tmp (make-temp-dir)

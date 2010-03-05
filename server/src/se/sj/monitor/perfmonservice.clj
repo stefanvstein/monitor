@@ -1,86 +1,81 @@
 (ns se.sj.monitor.perfmonservice
   (:use (se.sj.monitor database perfmon names) )
   (:use [clojure.contrib.duck-streams :only (reader)] )
+  (:use [clojure.contrib.logging :only (error info)] )
   (:import (java.net Socket) (java.io PrintWriter))
-  ; for testing purposes
-  (:use clojure.test)
-  ;for repl purposes
-  (:use (clojure stacktrace inspector)))
-;This should be private to a perfmon connection. It translates names for a connection
+  (:use (clojure stacktrace)))
 
 
-(def comments (atom {}))
 
-(defn causes [#^java.lang.Throwable e] (take-while #(not (nil? %)) (iterate #(when % (. % getCause)) e)))
-
-(defn- create-obj [line perfmon-names current-time comments]
+(defn- create-obj [line perfmon-names current-time]
   (parse-perfmon-string line 
 			(fn [identifier name] 
 			  (store-name perfmon-names identifier name perfmon-columns))
 			(fn [identifier value] 
 			  (when @current-time 
-					;(dosync (alter perfmon-data add 
-					;		   (get-name perfmon-names identifier) 
-					;		   @current-time 
-					;		   value))))
 			    (add-data (get-name perfmon-names identifier) 
 					   @current-time 
 					   value)))
 			(fn [a-comment] 
 			  (when @current-time 
-			    (swap! comments  assoc @current-time 
-				   (if-let [comments (get @comments @current-time)] 
-				     (conj comments a-comment)
-				     (list a-comment)))))
+			    (add-comment @current-time a-comment)))
 			(fn [a] (swap! current-time (fn [_] a )))
 			))
 
 
-(defn stop 
-  "Stop signal is expected to be a atom of boolean fn []"
-  [stop-signal]
-  (swap! stop-signal (fn [_] (fn [] true))))
 
 (defn add-perfmon-from 
-  ([comments source stop-signal]
+  ([source info-string stop-signal]
      (let [names (ref {})
 	   current-time (atom nil)]
+       (add-comment (str "Starts " info-string)) 
        (with-open [input (reader source)] 
 	 (loop [data (line-seq input)] 
-	   (when (not (@stop-signal))
-	     (create-obj (first data) names current-time comments)
-	     (when-let [more (next data)]
-	       (recur more)))))))
-  ([comments source]
+	   (if  (stop-signal)
+	     (add-comment (str "Stops " info-string))
+	     (do (create-obj (first data) names current-time)
+		 (when-let [more (next data)]
+		   (recur more))))
+	   ))))
+  ([source]
      (add-perfmon-from comments source (atom (fn [] false)))))
 
 
 (defn perfmon-connection 
-"Returns a closure that will try to open a TCP connection to address and port and to a perfmon server and collect perfmon data from it. The stop-signl is expected to be atom of a bool fn. the clojure will return when stop-signal is false"
+"Returns a closure that will try to open a TCP connection to address and port and to a perfmon server and collect perfmon data from it. The stop-signl is fn returning true value when connection should be closed, and closure return."
 ;TODO make arities that sets filters
- ([comments adress port stop-signal]
+ ([adress port stop-signal]
 
-  #(with-open [socket (Socket. adress port)
-	      output (PrintWriter. (. socket getOutputStream) true)
-	      input (. socket getInputStream)]
-     (. output println "start")
-     (add-perfmon-from comments input stop-signal)))
- ([comments adress port stop-signal hosts-exp categories-exp counters-exp instances-exp]
-  #(with-open [socket (Socket. adress port)
-	      output (PrintWriter. (. socket getOutputStream) true)
-	      input (. socket getInputStream)]
-     (. output println (str "hosts " hosts-exp))
-     (. output println (str "categories " categories-exp))
-     (. output println (str "counters " counters-exp))
-     (. output println (str "instances " instances-exp))
-     (. output println "start")
-     (add-perfmon-from comments input stop-signal))))
+  #(try
+    (with-open [socket (Socket. adress port)
+		output (PrintWriter. (. socket getOutputStream) true)
+		input (. socket getInputStream)]
+      (. output println "start")
+      (add-perfmon-from input (str "perfmon " adress ":" port) stop-signal))
+    (catch Exception e
+      (cond 
+       (instance? java.net.ConnectException (root-cause e))
+       (info (str "Nobody is listening on " adress ":" port))
+       (instance? java.net.UnknownHostException (root-cause e))
+       (error (str "Unknown host " adress))
+	true (throw e)))))
+ ([adress port stop-signal hosts-exp categories-exp counters-exp instances-exp]
+  #(try
+    (with-open [socket (Socket. adress port)
+		output (PrintWriter. (. socket getOutputStream) true)
+		input (. socket getInputStream)]
+      (. output println (str "hosts " hosts-exp))
+      (. output println (str "categories " categories-exp))
+      (. output println (str "counters " counters-exp))
+      (. output println (str "instances " instances-exp))
+      (. output println "start")
+      (add-perfmon-from input (str "perfmon " adress ":" port " (hosts:\"" hosts-exp "\" categories:\"" categories-exp "\" counters:\"" counters-exp "\" instances:\"" instances-exp "\")") stop-signal))
+    (catch Exception e
+      (cond 
+       (instance? java.net.ConnectException (root-cause e))
+       (info (str "Nobody is listening on " adress ":" port))
+       (instance? java.net.UnknownHostException (root-cause e))
+       (error (str "Unknown host " adress))
+	true (throw e))))))
 
-(defn start-collecting-perfmon-in-tread
-  "Starts collecting and returns a stopper"
-  [comments adress port]
-  (let [stopper (atom (fn [] false))
-	f (perfmon-connection  comments adress port stopper)
-	thread (Thread. f (str "Perfmon collector " adress ":" port))]
-    (. thread start )
-    stopper))
+
