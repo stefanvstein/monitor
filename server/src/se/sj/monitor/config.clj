@@ -1,6 +1,6 @@
 (ns se.sj.monitor.config
   (:import (java.util.logging Logger SimpleFormatter ConsoleHandler Formatter Level))
-  (:use (se.sj.monitor database jmxcollection server))
+  (:use (se.sj.monitor database jmxcollection server clientif))
   (:use [se.sj.monitor.perfmonservice :only (perfmon-connection)])
   (:use (clojure stacktrace)))
 
@@ -47,22 +47,23 @@
   []
   (using-logger
   (let [interval 15]
-    
-    (serve [(fn [] (jmx-java6 (fn [] 
-				(when (not @stop-signal)
-				  (try
-				   (Thread/sleep (* interval 1000))
-				   (catch InterruptedException e)))
-				@stop-signal)))
-	    (perfmon-connection "mssj022" 3434 (fn []  @stop-signal) ".*" "Processor" ".*User Time" ".*")
-;	    (perfmon-connection "mssj022" 3437 (fn []  @stop-signal) ".*" "Processor" ".*User Time" ".*")
-	    (fn [] (while (not @stop-signal)
-			  (try (Thread/sleep 30000)
-			       (catch InterruptedException _))
-			  (clean-live-data-older-than 
-			   (java.util.Date. (- (System/currentTimeMillis) 
+    (serve-clients 
+     0 3030 #(deref stop-signal)
+     (serve [(fn [] (jmx-java6 (fn [] 
+				 (when (not @stop-signal)
+				   (try
+				    (Thread/sleep (* interval 1000))
+				    (catch InterruptedException e)))
+				 @stop-signal)))
+	     (perfmon-connection "mssj022" 3434 (fn []  @stop-signal) ".*" "Processor" ".*User Time" ".*")
+					;	    (perfmon-connection "mssj022" 3437 (fn []  @stop-signal) ".*" "Processor" ".*User Time" ".*")
+	     (fn [] (while (not @stop-signal)
+			   (try (Thread/sleep 30000)
+				(catch InterruptedException _))
+			   (clean-live-data-older-than 
+			    (java.util.Date. (- (System/currentTimeMillis) 
 						(* 1000 60 60))))))
-	    ]))))
+	     ])))))
 				   
 			
 
