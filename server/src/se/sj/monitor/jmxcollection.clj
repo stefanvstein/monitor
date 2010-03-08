@@ -217,8 +217,11 @@
  ([host port stop-fn]
    (using-jmx host port (jmx-java6-impl stop-fn)))
  ([stop-fn] 
-    (if-let [jmxport (Integer/parseInt (System/getProperty "com.sun.management.jmxremote.port"))]
-      (jmx-java6 jmxport stop-fn)
+    (if-let [jmxport (System/getProperty "com.sun.management.jmxremote.port")]
+      (try
+       (jmx-java6 (Integer/parseInt jmxport) stop-fn)
+       (catch NumberFormatException e
+	 (throw (IllegalArgumentException. (str "com.sun.management.jmxremote.port set to something else ththan integer " jmxport )))))
       (throw (IllegalArgumentException. "com.sun.management.jmxremote.port not set on local process")))))
  
 (deftest test-java6

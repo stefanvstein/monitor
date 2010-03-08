@@ -69,14 +69,14 @@
 
 (defn raw-live-names []
   (let [result (reduce (fn [result a-name]
-	    (conj result  (keyworded-names-as-string a-name))) 
+	    (conj result (HashMap. (keyworded-names-as-string a-name))))
 	  [] 
 	  (names-where (fn [_] true)))]
     (java.util.ArrayList. result)))
  
 (defn raw-names [from to]
   (java.util.ArrayList. (reduce (fn [result a-name]
-	    (conj result  (keyworded-names-as-string a-name))) 
+	    (conj result (HashMap. (keyworded-names-as-string a-name))))
 	  [] 
 	  (names-where (fn [_] true) from to))))
 
@@ -186,7 +186,7 @@
      (finally (rmdir-recursive tmp)
 	      (swap! stop-signal (fn [_] true))
 	      (Thread/sleep 1200)
-	      (clean-live-data-older-than (dparse "20110101 010101"))))))
+	      (clean-live-data-older-than (dparse "19700101 010101"))))))
 
 (deftest test-raw-live-data
   (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
@@ -203,12 +203,28 @@
        (is (instance? TreeMap (val (first res)))) 
   ))))
 
+(deftest test-raw-live-names
+  (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
+	dparse #(. df parse %)]
+    (using-live
+     (add-data {:host "Arne" :counter "Nisse"} (dparse "20100101 100001") 1)
+     (add-data {:host "Arne" :counter "Olle"} (dparse "20100101 100002") 2)
+     (add-data {:host "Arne" :counter "Nisse"} (dparse "20100101 100003") 3)
+     (add-data {:host "Bengt" :counter "Olle"} (dparse "20100101 100004") 4)
+
+     (let [res (raw-live-names )]
+       (is (instance? java.util.ArrayList res))
+       (is (instance? HashMap  (first res)))
+ ;      (is (instance? TreeMap (val (first res)))) 
+  ))))
+
   (deftest test-serving
     (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	  dparse #(. df parse %)
       stop-signal (atom false)
       stop #(deref stop-signal)]
     (try
+     (clean-live-data-older-than (dparse "19700101 010101"))
      (add-data {:host "Arne" :counter "Nisse"} (dparse "20100101 100001") 1)
      (add-data {:host "Arne" :counter "Olle"} (dparse "20100101 100002") 2)
      (add-data {:host "Arne" :counter "Nisse"} (dparse "20100101 100003") 3)
@@ -230,7 +246,7 @@
 
      (finally (swap! stop-signal (fn [_] true))
 	      (Thread/sleep 1200)
-	      (clean-live-data-older-than (dparse "20110101 010101")))
+	      (clean-live-data-older-than (dparse "20110101 010001")))
 )))
 
 
