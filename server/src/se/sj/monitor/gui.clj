@@ -11,7 +11,7 @@
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart))
-  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem)))
+  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond)))
 
 (def frames (atom #{}))
 
@@ -181,7 +181,7 @@
 (defn get-data [from to names]
   (let [df #(.parse (java.text.SimpleDateFormat. "yyyyMMdd HHmmss") %)]
     {{"vips" "Allan" "vops" "Nisse"}
-     {(df "20010101 010101") 1 (df "20010101 010101") 2 (df "20010101 010101") 3 (df "20010101 010101") 2}})
+     {(df "20010101 010101") 1 (df "20010101 010102") 2 (df "20010101 010103") 3 (df "20010101 010104") 2}})
     )
 			
 (defn add-analysis [contents]
@@ -216,7 +216,24 @@
 		(.start (Thread. #(let [result (get-data  from-date
 							   to-date
 							   name-values)]
-				    (SwingUtilities/invokeLater (fn [] (println result )))) "Data Retriever"))))
+				    (SwingUtilities/invokeLater (fn [] (println result )
+								  (let [graph (:time-series contents)]
+								    (dorun (map (fn [data]
+										  (let [time-serie 
+											(if-let 
+											    [serie 
+											     (. graph getSeries (str (key data)))]
+											  serie
+											  (let [serie (TimeSeries. (str (key data)))]
+											    (. graph addSeries serie)
+											    serie))]
+										    (let [new-timeserie (reduce (fn [toAdd entry]
+											      (.add toAdd (TimeSeriesDataItem. (Millisecond. (key entry)) (val entry)))
+											      toAdd)
+											        (TimeSeries. "") (val data))]
+										      (.addAndOrUpdate time-serie new-timeserie))))
+										   result)))
+								  ))) "Data Retriever"))))
 
 	]
     
