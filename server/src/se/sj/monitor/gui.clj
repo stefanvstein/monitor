@@ -5,7 +5,7 @@
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
 			DefaultComboBoxModel GroupLayout GroupLayout$Alignment))
 
-  (:import (javax.swing.table TableCellRenderer DefaultTableModel))
+  (:import (javax.swing.table TableCellRenderer AbstractTableModel))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component))
   (:import (java.awt.event WindowAdapter ActionListener))
   (:import (java.net Socket UnknownHostException))
@@ -136,7 +136,12 @@
 
 (defn new-analysis-panel [] 
   (let [panel (JPanel.)
-	table-model (DefaultTableModel.)
+	table-columns (atom [])
+	table-rows (atom [])
+	table-model (proxy [AbstractTableModel] []
+		      (getRowCount [] (count @table-rows))
+		      (getColumnCount [] (count @table-columns))
+		      (getValueAt [row column]))
 	time-series (TimeSeriesCollection.)]
     (doto panel
       (.setLayout (BorderLayout.))
@@ -164,10 +169,10 @@
      :time-series time-series}))
 
 (defn get-names [from to]
-  (let [names [{"vips" "Allan" "vops" "Nisse"}
-	       {"vips" "Arne" "vops" "Nils"}
-	       {"vips" "Allan" "vops" "Nils"}
-	       {"lul" "Dalle"}]]
+  (let [names [{:vips "Allan" :vops "Nisse"}
+	       {:vips "Arne" :vops "Nils"}
+	       {:vips "Allan" :vops "Nils"}
+	       {:lul "Dalle"}]]
     (reduce (fn [result name]
 	      (reduce (fn [r per-subname] 
 			(if-let [this-name (get result (key per-subname))]
@@ -180,7 +185,7 @@
 
 (defn get-data [from to names]
   (let [df #(.parse (java.text.SimpleDateFormat. "yyyyMMdd HHmmss") %)]
-    {{"vips" "Allan" "vops" "Nisse"}
+    {{:vips "Allan" :vops "Nisse"}
      {(df "20010101 010101") 1 (df "20010101 010102") 2 (df "20010101 010103") 3 (df "20010101 010104") 2}})
     )
 			
@@ -227,12 +232,15 @@
 											  (let [serie (TimeSeries. (str (key data)))]
 											    (. graph addSeries serie)
 											    serie))]
-										    (let [new-timeserie (reduce (fn [toAdd entry]
-											      (.add toAdd (TimeSeriesDataItem. (Millisecond. (key entry)) (val entry)))
-											      toAdd)
-											        (TimeSeries. "") (val data))]
+										    (let [new-timeserie 
+											  (reduce (fn [toAdd entry]
+												    (.add toAdd (TimeSeriesDataItem. 
+														 (Millisecond. (key entry)) 
+														 (val entry)))
+												    toAdd)
+												  (TimeSeries. "") (val data))]
 										      (.addAndOrUpdate time-serie new-timeserie))))
-										   result)))
+										result)))
 								  ))) "Data Retriever"))))
 
 	]
@@ -261,27 +269,30 @@
 			     combo-action (proxy [ActionListener] []
 					    (actionPerformed 
 					     [event]
-					     (let [non-blank-name-models (filter #(not (= "" (. (val %) getSelectedItem))) @combomodels-on-center)
-						   requirements (reduce (fn [requirements name-model]
-									  (assoc requirements 
-									    (key name-model) 
-									    (.getSelectedItem (val name-model)))
-									  ) {} non-blank-name-models)]
+					     (let [requirements 
+						   (reduce (fn [requirements keyword-model]
+							     (assoc requirements 
+							       (key keyword-model) ;Should requirement have name?
+							       (.getSelectedItem (val keyword-model)))
+							     ) 
+							   {} 
+							   (filter #(not (= "" (. (val %) getSelectedItem))) @combomodels-on-center))]
 					       (dorun (map (fn [combo] (.removeActionListener combo @combo-a)) @combos-on-center))
-					       (dorun (map (fn [named-model] 
-							     (let [current-model (val named-model)
-								   current-name (key named-model)
+					       (dorun (map (fn [keyword-model] 
+							     (let [current-model (val keyword-model)
+								   current-keyword (key keyword-model)
+								   current-name (name current-keyword)
 								   currently-selected (.getSelectedItem current-model)]
 							       (.removeAllElements current-model)
 							       (.addElement current-model "")
 							       (let [toadd (reduce (fn [toadd row]
 										     (if (every? 
 											  #(some (fn [a-data] (= % a-data)) row) 
-											  (dissoc requirements current-name))
-										       (let [element (get row current-name)]
+											  (dissoc requirements current-keyword))
+										       (let [element (get row current-keyword)]
 											 (conj toadd element))
 										       toadd))
-										   #{} (get names current-name))]
+										   #{} (current-keyword names))]
 								 (dorun (map (fn [el] (. current-model addElement el)) toadd)))
 							       (.setSelectedItem current-model currently-selected))) 
 							   @combomodels-on-center))
@@ -293,25 +304,27 @@
 				  (swap! components-on-center (fn [_] []))
 				  (swap! combomodels-on-center (fn [_] {}))
 				  (swap! combos-on-center (fn [_] []))
-				  (dorun (map (fn [name]
-						(let [label (JLabel. (key name))
+				  (dorun (map (fn [a-name]
+						(let [field-name (name (key a-name))
+						      label (JLabel. field-name)
 						      comboModel (DefaultComboBoxModel.)
-						      combo (JComboBox. comboModel)]
+						      combo (JComboBox. comboModel)
+						      ]
 						  (. comboModel addElement "")
 						  (let [toadd (reduce (fn [toadd i]
-									(if-let [a-value (get i (key name))]
+									(if-let [a-value ((key a-name) i)]
 									  (conj toadd a-value)
 									  toadd))
-								      #{} (val name))]
+								      #{} (val a-name))]
 						    (dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
-						  (. combo setName (key name))
+						  (. combo setName field-name)
 						  (. combo addActionListener combo-action)
 						  (. centerPanel add label)
 						  (. centerPanel add combo)
 						  (swap! components-on-center (fn [l] (conj l label)))
 						  (swap! components-on-center (fn [l] (conj l combo)))
 						  (swap! combos-on-center (fn [l] (conj l combo)))
-						  (swap! combomodels-on-center (fn [l] (assoc l (key name) comboModel))))) 
+						  (swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel))))) 
 					      names))
 				  
 				  
