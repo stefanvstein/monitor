@@ -81,23 +81,25 @@
 	  (names-where (fn [_] true) from to))))
 
 (defmacro serve-clients [port transfer-port stop-fn & form]
-  `(let [remote# (atom nil)] 
+  `(let [remote# (atom nil)
+	 exported#  (proxy [ServerInterface] []
+			 (rawData [from# to# names#] 
+				  (raw-data from# to# names#))
+			 (rawLiveData [ i#] 
+				      (raw-live-data i#))
+			 (rawLiveNames []
+				       (raw-live-names))
+			 (rawNames [from# to#]
+				   (raw-names from# to#))
+			 (classData [name#]
+				    (byte-code-for name#))
+			 (ping [])
+			 )] 
      (try 
-      (let [obj#
-	    (UnicastRemoteObject/exportObject 
-	     (proxy [ServerInterface] []
-	       (rawData [from# to# names#] 
-			(raw-data from# to# names#))
-	       (rawLiveData [ i#] 
-			    (raw-live-data i#))
-	       (rawLiveNames []
-			     (raw-live-names))
-	       (rawNames [from# to#]
-			 (raw-names from# to#))
-	       (classData [name#]
-			  (byte-code-for name#))
-	       ) ~port)]
+      (let [obj# (UnicastRemoteObject/exportObject 
+		       exported# ~port)]
 	(swap! remote# (fn [_#] obj#)))
+      
       (let [server-socket# (ServerSocket. ~transfer-port)]
 	(. server-socket# setSoTimeout 1000)
 	(.start (Thread. (fn []
@@ -113,7 +115,7 @@
       (finally (when @remote#
 		 (try 
 		  (UnicastRemoteObject/unexportObject @remote# true)
-		  (catch NoSuchObjectException _#)))))))
+		  (catch NoSuchObjectException _# )))))))
 
 (deftest simple
   (is (not (nil? (byte-code-for "clojure.lang.PersistentArrayMap")))))

@@ -11,12 +11,14 @@
 (with-open [
       jar (JarOutputStream. (FileOutputStream. output) (Manifest. (FileInputStream. manifest)))]
   (dorun (map (fn [an-input] 
-		(let [full-name-len (. (. (File. an-input) getAbsolutePath) length)]
+		(let [full-name-len  (. (. (File. an-input) getAbsolutePath) length)]
 		  (dorun (map (fn [file] 
 				(when-not (or (.isDirectory file) 
 					      (.isHidden file) 
 					      (. (.getName file) endsWith "~"))
-				  (. jar putNextEntry (ZipEntry. (. (.getAbsolutePath file) substring full-name-len)))
+				  (let [entry-name  (. (.getAbsolutePath file)  substring full-name-len)]
+;				    (println entry-name)
+				    (. jar putNextEntry (ZipEntry. (.substring entry-name 1))))
 				  (copy file jar))
 				) (file-seq (file-str an-input))))
 		  

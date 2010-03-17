@@ -1,9 +1,6 @@
-(ns se.sj.monitor.config
+(ns se.sj.monitor.logger
   (:import (java.util.logging Logger SimpleFormatter ConsoleHandler Formatter Level))
-  (:use (se.sj.monitor database jmxcollection server clientif))
-  (:use [se.sj.monitor.perfmonservice :only (perfmon-connection)])
   (:use (clojure stacktrace)))
-
 
 (defmacro using-logger
   [& form]
@@ -42,30 +39,3 @@
 	  (try
 	   (do ~@form)
 	  (finally (. logger# removeHandler handler#)))))
-
-(defn nr1 
-  []
-  (using-logger
-   (using-history "/home/stefan/testdb"
-		  (let [interval 15]
-		    (serve-clients 
-		     3031 3030 #(deref stop-signal)
-		     (serve [(fn [] (jmx-java6 (fn [] 
-						 (when (not @stop-signal)
-						   (try
-						    (Thread/sleep (* interval 1000))
-						    (catch InterruptedException e)))
-						 @stop-signal)))
-			     (perfmon-connection "mssj022" 3434 (fn []  @stop-signal) ".*" "Processor" ".*User Time" ".*")
-					;	    (perfmon-connection "mssj022" 3437 (fn []  @stop-signal) ".*" "Processor" ".*User Time" ".*")
-			     (fn [] (while (not @stop-signal)
-					   (try (Thread/sleep 30000)
-						(catch InterruptedException _))
-					   (clean-live-data-older-than 
-					    (java.util.Date. (- (System/currentTimeMillis) 
-								(* 1000 60 60))))))
-			     ])))
-		  (clean-live-data-older-than (. (java.text.SimpleDateFormat. "yyyyMMdd") parse "19700101")))))
-				   
-			
-

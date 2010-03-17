@@ -16,7 +16,7 @@ public interface ServerInterface extends Remote{
 	throws RemoteException;
 	Iterable<Map<String, String>> rawLiveNames() throws RemoteException;
 	Iterable<Map<String, String>> rawNames(Date from, Date to) throws RemoteException;
-	
+    void ping() throws RemoteException;
 	byte[] classData(String name) throws RemoteException;
 
 	public static class ServerClassLoader extends ClassLoader {

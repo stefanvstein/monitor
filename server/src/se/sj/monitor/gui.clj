@@ -3,11 +3,12 @@
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
-			DefaultComboBoxModel GroupLayout GroupLayout$Alignment))
+			DefaultComboBoxModel GroupLayout GroupLayout$Alignment JPopupMenu
+			BorderFactory SpringLayout))
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel))
-  (:import (java.awt Dimension BorderLayout Color FlowLayout Component))
-  (:import (java.awt.event WindowAdapter ActionListener))
+  (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout))
+  (:import (java.awt.event WindowAdapter ActionListener MouseAdapter))
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart))
@@ -57,8 +58,9 @@
 			UnknownHostException (JOptionPane/showMessageDialog 
 					      dialog "Unknown host" 
 					      "Error" JOptionPane/ERROR_MESSAGE)
-			(JOptionPane/showMessageDialog 
-			 dialog (.getMessage cause) "Error" JOptionPane/ERROR_MESSAGE))))))
+			(do (JOptionPane/showMessageDialog 
+			 dialog (.getMessage cause) "Error" JOptionPane/ERROR_MESSAGE)
+			    (println cause)))))))
 	onCancel #(.dispose dialog)
 	hostLabel (JLabel. "Host")
 	portLabel (JLabel. "Port")]
@@ -102,22 +104,16 @@
     (.pack dialog)
     (. dialog setVisible true)))
 
-
-
-      
-      
- 
 (defn connect 
   ([host port]
   (with-open [s (Socket. host port)
 	      ois (ObjectInputStream. (.getInputStream s))]
     (let [server (.readObject ois)]
-      (let [last @current-server] ;Is it possible to disable this, and clean up 
-	(swap! current-server (fn [_] server))))))
+	(swap! current-server (fn [_] server)))))
+
   ([frame]
      (connect-dialog frame)
      ))
-      
      
 (defn exit
   ([]
@@ -131,48 +127,124 @@
 		 JOptionPane/YES_NO_OPTION))
        (.dispose frame)
        (exit))))
+
 (defn new-runtime-panel []
   {:panel (JButton. "Runtime panel")})
 
+(def colors [Color/black Color/red Color/blue Color/green Color/yellow Color/cyan Color/magenta Color/orange Color/pink (Color. 205 133 063) Color/darkGray (Color. 144 238 144) (Color. 139 0 0) (Color. 139 0 139) (Color. 205 104 057) (Color. 192 255 062) (Color. 238 213 210) (Color. 255 215 000) (Color. 239, 222, 205) (Color. 120, 219, 226) (Color. 135, 169, 107) (Color. 159, 129, 112) (Color. 172, 229, 238) (Color. 162, 162, 208) (Color. 206, 255, 29) (Color. 205, 74, 76) (Color. 142, 69, 133) (Color. 113, 75, 35)(Color. 205, 197, 194) ])
+
 (defn new-analysis-panel [] 
   (let [panel (JPanel.)
-	table-columns (atom [])
+	color-cycle (atom (cycle colors)) 
+	table-columns (atom [:color])
 	table-rows (atom [])
 	table-model (proxy [AbstractTableModel] []
 		      (getRowCount [] (count @table-rows))
 		      (getColumnCount [] (count @table-columns))
-		      (getValueAt [row column]))
-	time-series (TimeSeriesCollection.)]
+		      (getColumnName [column] (name (get @table-columns column))) 
+		      (getValueAt [row column]
+				  (let [the-keyword (nth @table-columns column)]
+				    (if (= 0 column) 
+				      (:color (get @table-rows row))
+				     (the-keyword (:data (get @table-rows row))))))
+		      (getColumnClass [column] (if (= 0 column) Color Object)))
+	add-row (fn [data color name] 
+		  (let [internal-data {:data data :color color :name name}] 
+		    (when-not (some #(= (:name internal-data) (:name %)) @table-rows)
+		      (swap! table-rows (fn [rows] (conj rows internal-data)))
+		      (.fireTableDataChanged table-model))))
+
+	add-column (fn [k-word]
+		     (when-not (some #(= k-word %) @table-columns)
+		       (swap! table-columns (fn [cols] (conj cols k-word)))
+		       (.fireTableStructureChanged table-model)))
+
+	time-series (TimeSeriesCollection.)
+	chart (ChartFactory/createTimeSeriesChart 
+					      nil nil nil 
+					      time-series false false false)
+	remove-row (fn [row] 
+		     (.removeSeries time-series row)
+		     (swap! table-rows (fn [rows] 
+					 (let [begining (subvec rows 0 row )
+					       end (subvec rows (+ 1 row) (count rows))]
+					   (println begining)
+					   (println end)
+					   (if (empty? end)
+					     begining
+					     (apply conj begining end))
+					   )))
+		     (.fireTableDataChanged table-model)
+		     ;recolor 
+		     
+		     (dotimes [n (count @table-rows)]
+				   (.. chart (getPlot) (getRenderer) (setSeriesPaint n (:color (get @table-rows n))))))
+	table (JTable.)
+	current-row (atom nil)
+	popupMenu (doto (JPopupMenu.)
+		    (.add ( doto (JMenuItem. "Delete")
+			    (.addActionListener (proxy [ActionListener] []
+						  (actionPerformed [event]
+								   (println (str "Deleteing " @current-row))
+								   (remove-row @current-row)))))))
+	popup (fn [event]
+		(let [x (.getX event)
+		      y (.getY event)
+		      row (.rowAtPoint table (Point. x y))]
+		  (swap! current-row (fn [_] (.convertRowIndexToModel table row)))
+		  (.show popupMenu table x y)))]
+
+    
+
     (doto panel
       (.setLayout (BorderLayout.))
       (.add (doto (JSplitPane.)
 	      (.setOrientation JSplitPane/VERTICAL_SPLIT)
 	      (.setName "splitPane")
 	      (.setBottomComponent (doto (JScrollPane.)
-				   (.setViewportView (doto (JTable.)
+				   (.setViewportView (doto table
 						       (.setDefaultRenderer 
-							(class Color) 
-							(proxy [JLabel TableCellRenderer] []
+							Color 
+							(proxy [TableCellRenderer] []
 							  (getTableCellRendererComponent 
 							   [table color selected focus row column]
-							   (proxy-super setOpaque true)
-							   (proxy-super setBackground color))))
+							   (doto (JLabel.)
+							     (.setOpaque true)
+							     (.setBackground color)
+							     ))))
 						       (.setModel table-model)
+						       (.setCellSelectionEnabled false)
 						       (.setName "table")
+						       (.addMouseListener (proxy [MouseAdapter] []
+									    (mousePressed [event]
+											  (when (.isPopupTrigger event)
+											    (popup event)))
+									    (mouseReleased [event]
+											   (when (.isPopupTrigger event)
+											     (popup event)))))
 						       (.setAutoCreateRowSorter true)))))
-	    (.setTopComponent (doto (ChartPanel. 
-				     (doto (ChartFactory/createTimeSeriesChart 
-					    nil nil nil 
-					    time-series false false false))))))))
+	      (.setTopComponent (doto (ChartPanel. 
+				       (doto chart)))))))
     {:panel panel 
-     :table-model table-model 
+     :add-to-table add-row
+     :add-column add-column
+     :chart chart
+     :colors (fn [] (first (swap! color-cycle (fn [cyc] (rest cyc)))))
      :time-series time-series}))
 
+(defn- names-as-keyworded [names]
+  (reduce (fn [result name]
+	    (assoc result (keyword (key name)) (val name))) 
+	  {} names))
+
 (defn get-names [from to]
-  (let [names [{:vips "Allan" :vops "Nisse"}
-	       {:vips "Arne" :vops "Nils"}
-	       {:vips "Allan" :vops "Nils"}
-	       {:lul "Dalle"}]]
+;  (let [names [{:vips "Allan" :vops "Nisse"}
+;	       {:vips "Arne" :vops "Nils"}
+;	       {:vips "Allan" :vops "Nils"}
+;	       {:lul "Dalle"}]]
+  (let [raw-names (.rawNames @current-server from to)
+	names (reduce (fn [result a-map]
+			(conj result (names-as-keyworded a-map))) [] raw-names)]
     (reduce (fn [result name]
 	      (reduce (fn [r per-subname] 
 			(if-let [this-name (get result (key per-subname))]
@@ -184,16 +256,20 @@
     ))
 
 (defn get-data [from to names]
-  (let [df #(.parse (java.text.SimpleDateFormat. "yyyyMMdd HHmmss") %)]
-    {{:vips "Allan" :vops "Nisse"}
-     {(df "20010101 010101") 1 (df "20010101 010102") 2 (df "20010101 010103") 3 (df "20010101 010104") 2}})
-    )
+  (let [stringed-names (interleave 
+			(map #(name (first %)) (partition 2 names)) 
+			(map #(second %) (partition 2 names)))
+	data (.rawData @current-server from to (java.util.ArrayList. stringed-names))]
+    (reduce (fn [result a-data] 
+	      (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
+	    {} data)))
+
 			
 (defn add-analysis [contents]
-;  (when-not @current-server
-;    (JOptionPane/showMessageDialog 
-;     (:panel contents) "Not connected" 
-;     "Error" JOptionPane/ERROR_MESSAGE))
+  (when-not @current-server
+    (JOptionPane/showMessageDialog 
+     (:panel contents) "Not connected" 
+     "Error" JOptionPane/ERROR_MESSAGE))
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
 	from (let [model (SpinnerDateModel.)
 		   spinner (JSpinner. model)]
@@ -229,8 +305,21 @@
 											    [serie 
 											     (. graph getSeries (str (key data)))]
 											  serie
-											  (let [serie (TimeSeries. (str (key data)))]
+											  (let [serie (TimeSeries. (str (key data)))
+												color ((:colors contents))]
 											    (. graph addSeries serie)
+
+											      (.. (:chart contents) 
+												  (getPlot) 
+												  (getRenderer) 
+												  (setSeriesPaint 
+												   (- 
+												    (count (.getSeries graph)) 
+												    1) 
+												   color))
+
+											    ((:add-to-table contents) (key data) color (str (key data)))
+											    (dorun (map (fn [i] ((:add-column contents) i)) (keys (key data)))) 
 											    serie))]
 										    (let [new-timeserie 
 											  (reduce (fn [toAdd entry]
@@ -240,15 +329,16 @@
 												    toAdd)
 												  (TimeSeries. "") (val data))]
 										      (.addAndOrUpdate time-serie new-timeserie))))
-										result)))
-								  ))) "Data Retriever"))))
-
-	]
+										result)))))) 
+				 "Data Retriever"))))]
+    (doto centerPanel
+)
+      
     
 
-     (doto dialog
+    (doto dialog
       (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
-      (.setResizable false))
+      (.setResizable true))
      (.addActionListener close (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
      (.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd))))
      (let [contentPane (.getContentPane dialog)]
@@ -272,7 +362,7 @@
 					     (let [requirements 
 						   (reduce (fn [requirements keyword-model]
 							     (assoc requirements 
-							       (key keyword-model) ;Should requirement have name?
+							       (key keyword-model) 
 							       (.getSelectedItem (val keyword-model)))
 							     ) 
 							   {} 
@@ -301,35 +391,37 @@
 			  (swap! combo-a (fn [_] combo-action))
 			  
 			  (dorun (map #(. centerPanel remove %) @components-on-center))
-				  (swap! components-on-center (fn [_] []))
-				  (swap! combomodels-on-center (fn [_] {}))
-				  (swap! combos-on-center (fn [_] []))
-				  (dorun (map (fn [a-name]
-						(let [field-name (name (key a-name))
-						      label (JLabel. field-name)
-						      comboModel (DefaultComboBoxModel.)
-						      combo (JComboBox. comboModel)
-						      ]
-						  (. comboModel addElement "")
-						  (let [toadd (reduce (fn [toadd i]
-									(if-let [a-value ((key a-name) i)]
-									  (conj toadd a-value)
-									  toadd))
-								      #{} (val a-name))]
-						    (dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
-						  (. combo setName field-name)
-						  (. combo addActionListener combo-action)
-						  (. centerPanel add label)
-						  (. centerPanel add combo)
-						  (swap! components-on-center (fn [l] (conj l label)))
-						  (swap! components-on-center (fn [l] (conj l combo)))
-						  (swap! combos-on-center (fn [l] (conj l combo)))
-						  (swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel))))) 
-					      names))
+			  (swap! components-on-center (fn [_] []))
+			  (swap! combomodels-on-center (fn [_] {}))
+			  (swap! combos-on-center (fn [_] []))
+			  
+			    (let [labelsOnCenter (atom [])]
+			      (dorun (map (fn [a-name]
+					    (let [field-name (name (key a-name))
+						  label (JLabel. field-name JLabel/RIGHT)
+						  comboModel (DefaultComboBoxModel.)
+						  combo (JComboBox. comboModel)]
+					      (. comboModel addElement "")
+					      (let [toadd (reduce (fn [toadd i]
+								    (if-let [a-value ((key a-name) i)]
+								      (conj toadd a-value)
+								      toadd))
+								  #{} (val a-name))]
+						(dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
+					      (. combo setName field-name)
+					      (. combo addActionListener combo-action)
+					      (. centerPanel add label)
+					      (. centerPanel add combo)
+					      (swap! components-on-center (fn [l] (conj l label combo)))
+					      (swap! labelsOnCenter (fn [l] (conj l label)))
+					      (swap! combos-on-center (fn [l] (conj l combo)))
+					      (swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel)))))names))
+			      )) 
+			
 				  
 				  
 				  
-				  (.pack dialog)))]
+				  (.pack dialog))]
 		  (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
 		  update))))
        (. contentPane add centerPanel BorderLayout/CENTER)
