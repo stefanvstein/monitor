@@ -4,10 +4,11 @@
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
 			DefaultComboBoxModel GroupLayout GroupLayout$Alignment JPopupMenu
-			BorderFactory SpringLayout))
+			BorderFactory))
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel))
-  (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout))
+  (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
+		     GridBagLayout GridBagConstraints Insets))
   (:import (java.awt.event WindowAdapter ActionListener MouseAdapter))
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
@@ -332,7 +333,7 @@
 										result)))))) 
 				 "Data Retriever"))))]
     (doto centerPanel
-)
+      (.setBorder (BorderFactory/createEtchedBorder)))
       
     
 
@@ -375,6 +376,7 @@
 								   currently-selected (.getSelectedItem current-model)]
 							       (.removeAllElements current-model)
 							       (.addElement current-model "")
+							       
 							       (let [toadd (reduce (fn [toadd row]
 										     (if (every? 
 											  #(some (fn [a-data] (= % a-data)) row) 
@@ -387,15 +389,19 @@
 							       (.setSelectedItem current-model currently-selected))) 
 							   @combomodels-on-center))
 					       
-					       (dorun (map (fn [combo] (.addActionListener combo @combo-a)) @combos-on-center)))))]
+					       (dorun (map (fn [combo] (.addActionListener combo @combo-a)) @combos-on-center))
+					       (dorun (map (fn [combo] (if (= 1 (.getItemCount combo))
+									 (do (println "enabled")(.setEnabled combo false))
+									 (do (println "disabled")(.setEnabled combo true)))) @combos-on-center)))))]
 			  (swap! combo-a (fn [_] combo-action))
 			  
 			  (dorun (map #(. centerPanel remove %) @components-on-center))
 			  (swap! components-on-center (fn [_] []))
 			  (swap! combomodels-on-center (fn [_] {}))
 			  (swap! combos-on-center (fn [_] []))
-			  
-			    (let [labelsOnCenter (atom [])]
+			  (.setLayout centerPanel (GridBagLayout.))
+			    (let [labelsOnCenter (atom [])
+				  ]
 			      (dorun (map (fn [a-name]
 					    (let [field-name (name (key a-name))
 						  label (JLabel. field-name JLabel/RIGHT)
@@ -410,8 +416,22 @@
 						(dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
 					      (. combo setName field-name)
 					      (. combo addActionListener combo-action)
-					      (. centerPanel add label)
-					      (. centerPanel add combo)
+					      (. centerPanel add label (GridBagConstraints. 
+									0 GridBagConstraints/RELATIVE 
+									1 1 
+									0 0 
+									GridBagConstraints/EAST 
+									GridBagConstraints/NONE 
+									(Insets. 1 1 0 4) 
+									0 0 ))
+					      (. centerPanel add combo (GridBagConstraints. 
+									1 GridBagConstraints/RELATIVE 
+									1 1 
+									0 0 
+									GridBagConstraints/WEST 
+									GridBagConstraints/NONE 
+									(Insets. 0 0 0 0) 
+									0 0 ))
 					      (swap! components-on-center (fn [l] (conj l label combo)))
 					      (swap! labelsOnCenter (fn [l] (conj l label)))
 					      (swap! combos-on-center (fn [l] (conj l combo)))
