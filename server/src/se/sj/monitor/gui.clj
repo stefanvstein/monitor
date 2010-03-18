@@ -27,15 +27,16 @@
 (catch Exception _))
 
 (declare connect)
-
+(def lastHost (atom ""))
+(def lastPort (atom ""))
 (defn connect-dialog [ parent]
   (let [dialog (JDialog. parent "Connection" false)
 	ok (JButton. "Ok")
 	cancel (JButton. "Cancel")
-	host (JTextField.)
-	port (JTextField.)
+	host (JTextField. @lastHost)
+	port (JTextField. @lastPort)
 	onOk #(let [host (.getText host)
-		       port (.getText port)]
+		    port (.getText port)]
 		   (try
 		    (let [port (Integer/parseInt port)]
 		      (if (> 0 port)
@@ -48,6 +49,8 @@
 							 JOptionPane/ERROR_MESSAGE)
 			  (do
 			    (connect host port)
+			    (swap! lastHost (fn [_] host))
+			    (swap! lastPort (fn [_] (Integer/toString port)))
 			    (.dispose dialog))
 			  )))
 		    (catch Exception e
@@ -239,10 +242,6 @@
 	  {} names))
 
 (defn get-names [from to]
-;  (let [names [{:vips "Allan" :vops "Nisse"}
-;	       {:vips "Arne" :vops "Nils"}
-;	       {:vips "Allan" :vops "Nils"}
-;	       {:lul "Dalle"}]]
   (let [raw-names (.rawNames @current-server from to)
 	names (reduce (fn [result a-map]
 			(conj result (names-as-keyworded a-map))) [] raw-names)]
@@ -253,8 +252,7 @@
 			  (assoc r (key per-subname) [(val per-subname)])))
 		      result 
 		      (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
-	       (sorted-map) names)
-    ))
+	       (sorted-map) names)))
 
 (defn get-data [from to names]
   (let [stringed-names (interleave 
@@ -265,12 +263,140 @@
 	      (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
 	    {} data)))
 
-			
-(defn add-analysis [contents]
-  (when-not @current-server
-    (JOptionPane/showMessageDialog 
-     (:panel contents) "Not connected" 
-     "Error" JOptionPane/ERROR_MESSAGE))
+(defn- on-add-to-analysis [from to name-values graph colors chart add-to-table add-column]
+  (.start (Thread. #(let [result (get-data from
+					   to
+					   name-values)]
+		      (SwingUtilities/invokeLater 
+		       (fn [] 
+			 (.setNotify chart false)
+			 (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries)))
+			 (dorun (map (fn [data]
+				       (let [time-serie 
+					     (if-let 
+						 [serie 
+						  (. graph getSeries (str (key data)))]
+					       serie
+					       (let [serie (TimeSeries. (str (key data)))
+						     color (colors)]
+						 (.setNotify serie false)
+						 (. graph addSeries serie)
+						 
+						 (.. chart 
+						     (getPlot) 
+						     (getRenderer) 
+						     (setSeriesPaint 
+						      (- 
+						       (count (.getSeries graph)) 
+						       1) 
+						      color))
+						 
+						 (add-to-table (key data) color (str (key data)))
+						 (dorun (map (fn [i] (add-column i)) (keys (key data)))) 
+						 serie))]
+					 (let [tempSerie  (TimeSeries. "")]
+					   (.setNotify tempSerie false)
+					   (let [new-timeserie 
+						 (reduce (fn [toAdd entry]
+							   (.add toAdd (TimeSeriesDataItem. 
+									(Millisecond. (key entry)) 
+									(val entry)))
+							   toAdd)
+							 tempSerie (val data))]
+					     
+					     (.addAndOrUpdate time-serie new-timeserie)))))
+				     result))
+			 (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
+			 (.setNotify chart true))))
+		   "Data Retriever")))
+
+(defn- on-update [names combomodels-on-center centerPanel add-button]
+  (let [
+;	components-on-center (atom [])
+	combos-on-center (atom [])
+	placeholder-for-combo-action (atom nil)
+	combo-action (proxy [ActionListener] []
+		      (actionPerformed 
+		       [event]
+		       (let [requirements 
+			     (reduce (fn [requirements keyword-model]
+				       (assoc requirements 
+					 (key keyword-model) 
+					 (.getSelectedItem (val keyword-model)))
+				       ) 
+				     {} 
+				     (filter #(not (= "" (. (val %) getSelectedItem))) @combomodels-on-center))]
+			 (dorun (map (fn [combo] (.removeActionListener combo @placeholder-for-combo-action)) @combos-on-center))
+			 (dorun (map (fn [keyword-model] 
+				       (let [current-model (val keyword-model)
+					     current-keyword (key keyword-model)
+					     current-name (name current-keyword)
+					     currently-selected (.getSelectedItem current-model)]
+					 (.removeAllElements current-model)
+					 (.addElement current-model "")
+					 
+					 (let [toadd (reduce (fn [toadd row]
+							       (if (every? 
+								    #(some (fn [a-data] (= % a-data)) row) 
+								    (dissoc requirements current-keyword))
+								 (let [element (get row current-keyword)]
+								   (conj toadd element))
+								 toadd))
+							     #{} (current-keyword names))]
+					   (dorun (map (fn [el] (. current-model addElement el)) toadd)))
+					 (.setSelectedItem current-model currently-selected))) 
+				     @combomodels-on-center))
+			 
+			 (dorun (map (fn [combo] (.addActionListener combo @placeholder-for-combo-action)) @combos-on-center))
+			 (dorun (map (fn [combo] (if (= 1 (.getItemCount combo))
+						   (.setEnabled combo false)
+						   (.setEnabled combo true))) 
+				     @combos-on-center))
+			 (if (every? (fn [model]  (= "" (.getSelectedItem model))) (vals @combomodels-on-center))
+			   (.setEnabled add-button false)
+			   (.setEnabled add-button true)))))]
+    (swap! placeholder-for-combo-action (fn [_] combo-action))
+    (dorun (map #(do (. centerPanel remove %)) (.getComponents centerPanel)))
+    (swap! combomodels-on-center (fn [_] {}))
+    (swap! combos-on-center (fn [_] []))
+    (.setLayout centerPanel (GridBagLayout.))
+    (let [labelsOnCenter (atom [])]
+      (dorun (map (fn [a-name]
+		    (let [field-name (name (key a-name))
+			  label (JLabel. field-name JLabel/RIGHT)
+			  comboModel (DefaultComboBoxModel.)
+			  combo (JComboBox. comboModel)]
+		      (. comboModel addElement "")
+		      (let [toadd (reduce (fn [toadd i]
+					    (if-let [a-value ((key a-name) i)]
+					      (conj toadd a-value)
+					      toadd))
+					  #{} (val a-name))]
+			(dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
+		      (. combo setName field-name)
+		      (. combo addActionListener combo-action)
+		      (. centerPanel add label (GridBagConstraints. 
+						0 GridBagConstraints/RELATIVE 
+						1 1 
+						0 0 
+						GridBagConstraints/EAST 
+						GridBagConstraints/NONE 
+						(Insets. 1 1 0 4) 
+						0 0 ))
+		      (. centerPanel add combo (GridBagConstraints. 
+						1 GridBagConstraints/RELATIVE 
+						1 1 
+						0 0 
+						GridBagConstraints/WEST 
+						GridBagConstraints/NONE 
+						(Insets. 0 0 0 0) 
+						0 0 ))
+		      (swap! labelsOnCenter (fn [l] (conj l label)))
+		      (swap! combos-on-center (fn [l] (conj l combo)))
+		      (swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel)))))
+		  names)))))
+
+(defn- add-dialog [contents]
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
 	from (let [model (SpinnerDateModel.)
 		   spinner (JSpinner. model)]
@@ -278,72 +404,47 @@
 	to (let [model (SpinnerDateModel.)
 		 spinner (JSpinner. model)]
 	     spinner)
-	add (JButton. "Add")
-	
-	close (JButton. "Close")
-	centerPanel (JPanel.)
-	components-on-center (atom [])
+
 	combomodels-on-center (atom {})
-	combos-on-center (atom [])
-	onAdd (fn [] 
-		(let [from-date (.getDate (.getModel from))
-		      to-date (.getDate (.getModel to))
-		      name-values (reduce (fn [result name-combomodel] 
-					     (let [the-value (.getSelectedItem (val name-combomodel))]
-					       (if (not (= "" the-value))
-						 (conj result (key name-combomodel) the-value)
-						 result)))
-					   [] @combomodels-on-center)]
-		  
-		(.start (Thread. #(let [result (get-data  from-date
-							   to-date
-							   name-values)]
-				    (SwingUtilities/invokeLater (fn [] (println result )
-								  (let [graph (:time-series contents)]
-								    (dorun (map (fn [data]
-										  (let [time-serie 
-											(if-let 
-											    [serie 
-											     (. graph getSeries (str (key data)))]
-											  serie
-											  (let [serie (TimeSeries. (str (key data)))
-												color ((:colors contents))]
-											    (. graph addSeries serie)
 
-											      (.. (:chart contents) 
-												  (getPlot) 
-												  (getRenderer) 
-												  (setSeriesPaint 
-												   (- 
-												    (count (.getSeries graph)) 
-												    1) 
-												   color))
-
-											    ((:add-to-table contents) (key data) color (str (key data)))
-											    (dorun (map (fn [i] ((:add-column contents) i)) (keys (key data)))) 
-											    serie))]
-										    (let [new-timeserie 
-											  (reduce (fn [toAdd entry]
-												    (.add toAdd (TimeSeriesDataItem. 
-														 (Millisecond. (key entry)) 
-														 (val entry)))
-												    toAdd)
-												  (TimeSeries. "") (val data))]
-										      (.addAndOrUpdate time-serie new-timeserie))))
-										result)))))) 
-				 "Data Retriever"))))]
-    (doto centerPanel
-      (.setBorder (BorderFactory/createEtchedBorder)))
-      
-    
+	onAdd (fn []
+		(let [name-values (reduce (fn [result name-combomodel] 
+					    (let [the-value (.getSelectedItem (val name-combomodel))]
+					      (if (not (= "" the-value))
+						(conj result (key name-combomodel) the-value)
+						result)))
+					  []  @combomodels-on-center)]
+		(on-add-to-analysis (.getDate (.getModel from))
+			(.getDate (.getModel to))
+			name-values
+			(:time-series contents)
+			(:colors contents)
+			(:chart contents)
+			(:add-to-table contents)
+			(:add-column contents))))
+	
+	add (let [add (JButton. "Add")]
+	      (.setEnabled add false)
+	      add)
+	close (JButton. "Close")
+	centerPanel (JPanel.)]
 
     (doto dialog
       (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
       (.setResizable true))
-     (.addActionListener close (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
-     (.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd))))
-     (let [contentPane (.getContentPane dialog)]
-       (let [panel (JPanel.)]      
+
+    (.addActionListener close (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
+    (.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd))))
+    (let [contentPane (.getContentPane dialog)]
+      (. contentPane add centerPanel BorderLayout/CENTER)
+      (. contentPane add (doto (JPanel.)
+			     (.setLayout (FlowLayout. FlowLayout/CENTER))
+			     (.add add)
+			     (.add close)) 
+	   BorderLayout/SOUTH)
+
+
+      (let [panel (JPanel.)]      
 	(. contentPane add panel BorderLayout/NORTH)
 	(doto panel
 	  (.setLayout (FlowLayout. FlowLayout/CENTER))
@@ -352,110 +453,25 @@
 	  (.add (JLabel. "To:"))
 	  (.add to)
 	  (.add (let [update (JButton. "Update")
-		      onUpdate 
-		      (fn [] 
-			(let[ names (get-names (.. from (getModel) (getDate)) 
-					       (.. to (getModel) (getDate)))
-			     combo-a (atom nil)
-			     combo-action (proxy [ActionListener] []
-					    (actionPerformed 
-					     [event]
-					     (let [requirements 
-						   (reduce (fn [requirements keyword-model]
-							     (assoc requirements 
-							       (key keyword-model) 
-							       (.getSelectedItem (val keyword-model)))
-							     ) 
-							   {} 
-							   (filter #(not (= "" (. (val %) getSelectedItem))) @combomodels-on-center))]
-					       (dorun (map (fn [combo] (.removeActionListener combo @combo-a)) @combos-on-center))
-					       (dorun (map (fn [keyword-model] 
-							     (let [current-model (val keyword-model)
-								   current-keyword (key keyword-model)
-								   current-name (name current-keyword)
-								   currently-selected (.getSelectedItem current-model)]
-							       (.removeAllElements current-model)
-							       (.addElement current-model "")
-							       
-							       (let [toadd (reduce (fn [toadd row]
-										     (if (every? 
-											  #(some (fn [a-data] (= % a-data)) row) 
-											  (dissoc requirements current-keyword))
-										       (let [element (get row current-keyword)]
-											 (conj toadd element))
-										       toadd))
-										   #{} (current-keyword names))]
-								 (dorun (map (fn [el] (. current-model addElement el)) toadd)))
-							       (.setSelectedItem current-model currently-selected))) 
-							   @combomodels-on-center))
-					       
-					       (dorun (map (fn [combo] (.addActionListener combo @combo-a)) @combos-on-center))
-					       (dorun (map (fn [combo] (if (= 1 (.getItemCount combo))
-									 (do (println "enabled")(.setEnabled combo false))
-									 (do (println "disabled")(.setEnabled combo true)))) @combos-on-center)))))]
-			  (swap! combo-a (fn [_] combo-action))
-			  
-			  (dorun (map #(. centerPanel remove %) @components-on-center))
-			  (swap! components-on-center (fn [_] []))
-			  (swap! combomodels-on-center (fn [_] {}))
-			  (swap! combos-on-center (fn [_] []))
-			  (.setLayout centerPanel (GridBagLayout.))
-			    (let [labelsOnCenter (atom [])
-				  ]
-			      (dorun (map (fn [a-name]
-					    (let [field-name (name (key a-name))
-						  label (JLabel. field-name JLabel/RIGHT)
-						  comboModel (DefaultComboBoxModel.)
-						  combo (JComboBox. comboModel)]
-					      (. comboModel addElement "")
-					      (let [toadd (reduce (fn [toadd i]
-								    (if-let [a-value ((key a-name) i)]
-								      (conj toadd a-value)
-								      toadd))
-								  #{} (val a-name))]
-						(dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
-					      (. combo setName field-name)
-					      (. combo addActionListener combo-action)
-					      (. centerPanel add label (GridBagConstraints. 
-									0 GridBagConstraints/RELATIVE 
-									1 1 
-									0 0 
-									GridBagConstraints/EAST 
-									GridBagConstraints/NONE 
-									(Insets. 1 1 0 4) 
-									0 0 ))
-					      (. centerPanel add combo (GridBagConstraints. 
-									1 GridBagConstraints/RELATIVE 
-									1 1 
-									0 0 
-									GridBagConstraints/WEST 
-									GridBagConstraints/NONE 
-									(Insets. 0 0 0 0) 
-									0 0 ))
-					      (swap! components-on-center (fn [l] (conj l label combo)))
-					      (swap! labelsOnCenter (fn [l] (conj l label)))
-					      (swap! combos-on-center (fn [l] (conj l combo)))
-					      (swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel)))))names))
-			      )) 
-			
-				  
-				  
-				  
-				  (.pack dialog))]
+		      onUpdate (fn [] 
+				 (let [from (.. from (getModel) (getDate))
+				       to (.. to (getModel) (getDate))]
+				   (let [names (get-names from to)]
+				     (on-update names combomodels-on-center centerPanel add)
+				     (.pack dialog))))]
 		  (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
-		  update))))
-       (. contentPane add centerPanel BorderLayout/CENTER)
-       (let [panel (JPanel.)]
-	 (. contentPane add panel BorderLayout/SOUTH)
-	 (doto panel
-	   (.setLayout (FlowLayout. FlowLayout/CENTER))
-	  (.add add)
-	  (.add close)))
-       )
-     (doto dialog
-       (.pack)
-       (.setVisible true))
-))
+		  update)))))
+    dialog))
+			
+(defn add-analysis [contents]
+  (if (not @current-server)
+    (JOptionPane/showMessageDialog 
+     (:panel contents) "Not connected" 
+     "Error" JOptionPane/ERROR_MESSAGE)
+  (let [dialog (add-dialog contents)]
+    (doto dialog
+      (.pack)
+      (.setVisible true)))))
 
 (defn add-runtime [contents]
 (JOptionPane/showMessageDialog 
