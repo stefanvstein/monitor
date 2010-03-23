@@ -14,74 +14,14 @@
 (defn- object-names [server]
   (. server queryNames nil nil))
 
-(defn collector-beans 
-  [server] ;sun.management.GarbageCollectorImpl
-  (reduce #(if-let [match  
-		    (re-matches #"java.lang:type=GarbageCollector,name=.*" (. %2 toString))] 
-	     (let [bean (. JMX newMXBeanProxy server %2 GarbageCollectorMXBean)
-		   timestamp (remote-time)]
-
-	       (add-comment timestamp (with-out-str 
-					(print (str "Garbage Collector \"" (. bean getName) "\" collecting "))
-					(dorun (map (fn [a] (print (str a ", "))) 
-						    (seq (. bean getMemoryPoolNames)))) 
-					(print (str "was found in " (vmname) " at " (remote-hostname)))))
-	       (conj %1 bean))
-		  %1) 
-	     []
-	     (object-names server)))
-
-(defn collector-data
-  [collectorBean]
-  (let [hostname (remote-hostname) 
-	vm (vmname)
-	collectorname (. collectorBean getName)
-	hasLastGc (some #(= "getLastGcInfo" (.getName %)) (.getMethods (class collectorBean)))]
-;(println (seq (.getMethods (class collectorBean))))
-    (concat (list [{:host hostname 
-	    :jvm vm 
-	    :category "GarbageCollector" 
-	    :counter "Count" 
-	    :instance collectorname} 
-	   (. collectorBean getCollectionCount)]
-	  [{:host hostname 
-	    :jvm vm 
-	    :category "GarbageCollector" 
-	    :counter "Time" 
-	    :instance collectorname} 
-	   (. collectorBean getCollectionTime)])
-	    (if hasLastGc
-	      (let [gcInfo (. collectorBean getLastGcInfo)
-		    last-gc-started (.getStartTime gcInfo)
-		    last-gc-duration (.getDuration gcInfo)
-		    beforeGc (.getMemoryUsageBeforeGc gcInfo)
-		    afterGc (.getMemoryUsageBeforeGc gcInfo)]
-		(list [{:host hostname
-			:jvm vm
-			:category "GarbageCollector"
-			:counter "LastCollectionStarted"
-			:instance collectorname}
-		       last-gc-started]
-		      [{:host hostname
-			:jvm vm
-			:category "GarbageCollector"
-			:counter "LastCollectionDuration"
-			:instance collectorname}
-		       last-gc-duration]
-		      [{:host hostname
-			:jvm vm
-			:category "GarbageCollector"
-			:counter "UsedBeforeGc"
-			:instance collectorname}
-		       (get beforeGc "used")]
-		       [{:host hostname
-			:jvm vm
-			:category "GarbageCollector"
-			:counter "UsedAfterGc"
-			:instance collectorname}
-		       (get afterGc "used")]))(list)))))
-
 (defn collector-keys [server]
+  (let [hasGcInfo  (try
+		    (let [gcinfo-class (Class/forName "com.sun.management.GcInfo")
+			  from-method (. gcinfo-class getMethod "from" (into-array [javax.management.openmbean.CompositeData]))
+			  create #(.invoke from-method nil (to-array [(.getValue %)]))]
+		      create)
+		    (catch ClassNotFoundException _ nil))]
+							    
   (reduce (fn [result object-name] 
 	    (if (re-matches #"java.lang:type=GarbageCollector,name=.*" 
 				       (. object-name toString))
@@ -93,136 +33,122 @@
 		    fns (reduce (fn [result attribut]
 				  (condp = (.getName attribut)
 				    "CollectionCount" (conj result (fn [attributes] 
-								     (when-let [the-attribute (some #(= "CollectionCount" (.getName %)) attributes)]
-								       (when-let [name (some #(= "Name" (.getName %)) attributes)] 
-								       [{:category "GarbageCollector"
-									:counter "Count"
-									:instance name
-									:jvm (vmname)
-									:host (remote-hostname)}
-									(.getValue the-attribute)]))))
+								     (when-let [the-attribute (some #(when (= "CollectionCount" (.getName %))
+												       %) attributes)]
+								       (when-let [name (some #(when (= "Name" (.getName %)) (.getValue %)) attributes)] 
+
+									 [{:category "GarbageCollector"
+									   :counter "Count"
+									   :instance name
+									   :jvm (vmname)
+									   :host (remote-hostname)}
+									  (.getValue the-attribute)]))))
 
 				    "CollectionTime" (conj result (fn [attributes] 
-								     (when-let [the-attribute (some #(= "CollectionCount" (.getName %)) attributes)]
-								       (when-let [name (some #(= "Name" (.getName %)) attributes)] 
+								     (when-let [the-attribute (some #(when (= "CollectionTime" (.getName %)) 
+												       %) attributes)]
+								       (when-let [name (some #(when (= "Name" (.getName %)) (.getValue %)) attributes)] 
 								       [{:category "GarbageCollector"
-									:counter "Count"
+									:counter "Time"
 									:instance name
 									:jvm (vmname)
 									:host (remote-hostname)}
-									(.getValue the-attribute)]))))
+									(/ (.getValue the-attribute) 1000.0)]))))
 
-				   ; "LastGcInfo" (conj result )
+				    "LastGcInfo"  (if hasGcInfo 
+						    (conj result (fn [attirbutes] 
+								   (when-let [the-attribute (some #(when (= "LastGcInfo" (.getName %)) 
+												     %) attributes)]
+								     (when-let [name (some #(when (= "Name" (.getName %)) (.getValue %)) attributes)] 
+								     (let [gcinfo (hasGcInfo the-attribute)
+									   before-gc (.getMemoryUsageBeforeGc gcinfo)
+									   after-gc (.getMemoryUsageAfterGc gcinfo)
+									   result [{:category "GarbageCollector"
+										    :counter "Last Duration"
+										    :instance name
+										    :jvm (vmname)
+										    :host (remote-hostname)}
+										   (/ (.getDuration gcinfo) 1000.0)]
+									   usage-before (reduce (fn [result area]
+												  (conj result {:category "GarbageCollector"
+														 :counter "Usage Before Last"
+														 :instance name
+														 :jvm (vmname)
+														 :host (remote-hostname)
+														 :section (key area)}
+													 (.getUsed (val area)))) [] before-gc)
+									   committed-after (reduce (fn [result area]
+												      (conj result {:category "GarbageCollector"
+														    :counter "Committed After Last"
+														    :instance name
+														    :jvm (vmname)
+														    :host (remote-hostname)
+														    :section (key area)}
+													    (.getCommitted (val area)))) [] after-gc)
+									   max-after (reduce (fn [result area]
+												      (conj result {:category "GarbageCollector"
+														    :counter "Max After Last"
+														    :instance name
+														    :jvm (vmname)
+														    :host (remote-hostname)
+														    :section (key area)}
+													    (.getMax (val area)))) [] after-gc)
+									   usage-after (reduce (fn [result area]
+												 (conj result {:category "GarbageCollector"
+														:counter "Usage After Last"
+														:instance name
+														:jvm (vmname)
+														:host (remote-hostname)
+														:section (key area)}
+													(.getUsed (val area)))) [] after-gc)]
+								       (concat result usage-before usage-after committed-after max-after)
+								       )))))
+						    result)
 				    result)) [] attributes)]
-		
-	      (assoc result object-name fns))
-	     result))
-	  {} (object-names server)))
+		(assoc result object-name fns))
+	      result))
+	  {} (object-names server))))
 
-(defn collector-attributes
-  [server]
-  (let [obj-names 
-	(reduce #(if-let [match  
-			  (re-matches #"java.lang:type=GarbageCollector,name=.*" (. %2 toString))]
-		   (conj %1 %2)
-		   %1)
-		[] (object-names server))]
-    (dorun (map (fn [object-name]
-		  (let [attributes (. server getAttributes 
-				      object-name 
-				      (into-array ["Name" "CollectionCount" "CollectionTime" "LastGcInfo"]))]
-		    (dorun (map #(do 
-				   (condp = (.getName %)
-				     "CollectionCount" (println (str "Collection count " (.getValue %)))
-				     "CollectionTime"  (println (str "Collection time " (.getValue %)))
-				     "LastGcInfo"  (try
-						    (when-let [gcinfo-class (Class/forName "com.sun.management.GcInfo")]
-						      (let [from-method (. gcinfo-class getMethod "from" (into-array [javax.management.openmbean.CompositeData])) 
-							    gcinfo (. from-method invoke nil (to-array[(.getValue %)]))]
-							
-							(println (.getId gcinfo))
-							
-							(let [after (.getMemoryUsageAfterGc gcinfo)]
-							  (dorun (map (fn [i]
-									(print (key i))
-									(print " ")
-									(println (. (val i) getUsed)))
-								      after)))))
-						    (catch IllegalArgumentException e (println (. e getMessage)))
-						    (catch ClassNotFoundException e (println (. e getMessage))))
-				     "Name"  (println (str "Name " (.getValue %)))
-				     ))
-				(seq attributes)))))
-		obj-names))))
+(defn collector-values [collector-keys server]
+  (reduce (fn [result a-key] 
+	    (let [attributeList (.asList (.getAttributes server (key a-key) (into-array ["Name" 
+							    "CollectionCount" 
+							    "CollectionTime" 
+							    "LastGcInfo"])))]
+	      (reduce (fn [re aval]
+			(let [r (aval attributeList)]
+			(apply assoc re r))) 
+		      result (val a-key)))) 
+	  {} collector-keys))
 
+;(defn memory-fns [server]
+;  (let [poolbean (. JMX newMXBeanProxy server
+;		      (ObjectName. "java.lang:type=Runtime") RuntimeMXBean)
+;)
 
-(defn memory-pool-beans 
-  [server]
-  (reduce #(if-let [match  
-		       (re-matches #"java.lang:type=MemoryPool,name=.*" (. %2 toString))] 
-		(let [bean (. JMX newMXBeanProxy server %2 GarbageCollectorMXBean)
-		      timestamp (remote-time)]
-		  (add-comment timestamp (with-out-str 
-					   (print (str "Memory Pool \"" (. bean getName) "\" managed by "))
-					   (dorun (map (fn [a] (print (str a ", "))) 
-						       (seq (. bean getMemoryManagerNames)))) 
-					   (print (str "was found in " (vmname) " at " (remote-hostname)))))
-		  %1)) 
-	     []
-	     (object-names server)))
-(comment
-(defn memory-pool-data
-  [memory-pool-bean]
-  (let [hostname (remote-hostname) 
-	vm (vmname)
-	poolname (. memory-pool-bean getName)]
-    (list [{:host hostname 
-	    :jvm vm 
-	    :category "MemoryPool" 
-	    :counter "Count" 
-	    :instance poolname} 
-	   (. collectorBean getCollectionCount)]
-	  [{:host hostname 
-	    :jvm vm 
-	    :category "GarbageCollector" 
-	    :counter "Time" 
-	    :instance collectorname} 
-	   (. collectorBean getCollectionTime)])))
-)
 (defn- jmx-java6-impl
   [stop-fn]
-    (fn [server]
-      ;(collector-attributes server)
-     ; (dorun (map #(println %) (collector-keys server)))
-;(println "*****")
-      (let [col-beans (collector-beans server)]
-	(while (not (stop-fn))
-	       (let [the-time (remote-time)]
-		 (dorun (map #(let [data (collector-data %)
-				    count-data (first data) 
-				    time-data (second data)]
-				(add-data (first count-data) the-time (second count-data))
-				(add-data (first time-data) the-time (second time-data)))
-			     (seq col-beans)))
-		 (add-data 
-		  {:host (remote-hostname) 
-		   :jvm (vmname) 
-		   :category "Runtime" 
-		   :counter "UpTime"}
-		  the-time (remote-uptime *current-runtime-bean* TimeUnit/SECONDS)))))))
+  (let [attribute-fns (collector-keys (mbean-server))]
+    (while (not (stop-fn))
+	   (let [the-time (remote-time)]
+
+	     (dorun (map (fn [i]  
+			   (add-data (key i) the-time (val i))) 
+			 (collector-values attribute-fns (mbean-server))))
+	     (add-data 
+	      {:host (remote-hostname) 
+	       :jvm (vmname) 
+	       :category "Runtime" 
+	       :counter "UpTime"}
+		  the-time (remote-uptime TimeUnit/SECONDS))))))
 
 (defn jmx-java6 
  ([port stop-fn]
-     (using-jmx port (jmx-java6-impl stop-fn)))
+     (using-jmx-port port (jmx-java6-impl stop-fn)))
  ([host port stop-fn]
    (using-jmx host port (jmx-java6-impl stop-fn)))
  ([stop-fn] 
-    (if-let [jmxport (System/getProperty "com.sun.management.jmxremote.port")]
-      (try
-       (jmx-java6 (Integer/parseInt jmxport) stop-fn)
-       (catch NumberFormatException e
-	 (throw (IllegalArgumentException. (str "com.sun.management.jmxremote.port set to something else ththan integer " jmxport )))))
-      (throw (IllegalArgumentException. "com.sun.management.jmxremote.port not set on local process")))))
+    (jmx-java6-impl stop-fn)))
  
 (deftest test-java6
  (using-live
@@ -245,10 +171,7 @@
     (let [uptime (data-by (fn [i] (= (:counter i) "UpTime"))) 
 	  uptime-values (vals (val (first uptime)))]
       (is (= 2 (count uptime-values)))
-      (is (<= (first uptime-values) (second uptime-values))))
-    
-
-)))
+      (is (<= (first uptime-values) (second uptime-values)))))))
 
 
   

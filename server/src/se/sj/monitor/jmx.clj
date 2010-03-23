@@ -1,93 +1,242 @@
 (ns se.sj.monitor.jmx
   (:import (javax.management.remote JMXConnectorFactory JMXServiceURL) 
-	   (javax.management JMX ObjectName) 
+	   (javax.management JMX ObjectName MBeanServerFactory) 
 	   (java.lang.management ManagementFactory RuntimeMXBean)
 	   (java.util Date)
-	   (java.net InetAddress)
+	   (java.net InetAddress UnknownHostException)
 	   (java.util.concurrent TimeUnit)
 	   (java.text SimpleDateFormat))
+  (:use clojure.contrib.logging)
 					; for testing purposes
   (:use clojure.test)
 					;for repl purposes
   (:use (clojure stacktrace inspector)))
 
+(def *current-mbean-connection* (let [server (ManagementFactory/getPlatformMBeanServer)
+				      runtime (ManagementFactory/getRuntimeMXBean) ]
+				  (assoc {} 
+				    :server server 
+				    :host (. (. InetAddress getLocalHost) getCanonicalHostName)
+				    :runtime runtime
+				    :vmname (.getName runtime))))
 
-(def *current-runtime-bean* (. ManagementFactory getRuntimeMXBean))
-(def *vmname* (. *current-runtime-bean* getName))
-(def *current-host* (. (. InetAddress getLocalHost) getCanonicalHostName))
-(def known-hosts (atom {}))
-(defn remote-time 
-  ([runtime]
-     (let [  remoteTimeMs (+ (. runtime getStartTime) (. runtime getUptime))] 
-       (Date. remoteTimeMs)))
-  ([]
-     (remote-time *current-runtime-bean*)))
+(def mbean-connections (atom #{*current-mbean-connection*}))
 
 
-(defn remote-uptime
-  ([runtime]
-     (. runtime getUptime))
-  ([runtime timeUnit]
-     (. timeUnit convert (remote-uptime runtime) (. TimeUnit MILLISECONDS))))
-     
-  
+(defn open-mbean-connector
+  [mbean-connector]
+   (when-let [connector (:connector mbean-connector)]
+     (try (.connect connector)
+     (let [server (.getMBeanServerConnection connector)
+	   result (assoc mbean-connector
+		    :runtime  (. JMX newMXBeanProxy server 
+				 (ObjectName. "java.lang:type=Runtime") RuntimeMXBean)
+		    :server server)]
+       (swap! mbean-connections (fn [current] (conj current result)))
+       result)
+     (catch Exception e 
+       (info (str "Could not connect to MBeanServer at " 
+		  (:host mbean-connector) ":" (:port mbean-connector) "." 
+		  (.getMessage e)))
+       nil))))
 
-(defn remote-pid
-  [runtime]
-  (let [name (. runtime getName)]
-    (. Integer parseInt (second ( re-matches #"([0-9]+)@.*" name)))))
 
-(defn remote-hostname
-  []
-  *current-host*)
+(declare remote-hostname vmname)
 
-(defn vmname
-  []
-  *vmname*)
-
-(defn using-jmx 
-"Where fun is a fn taking a javax.management.MBeanServer"
-  ([host port vmname fun]
-     (binding [*vmname* vmname] 
-     (let [url  (str "service:jmx:rmi:///jndi/rmi://"  host ":" port "/jmxrmi")]
-       (with-open [connector (. JMXConnectorFactory connect 
-				(JMXServiceURL. url))]
-	 (let [connection (. connector getMBeanServerConnection)]
-	   (binding [*current-runtime-bean* (. JMX newMXBeanProxy connection 
-					       (ObjectName. "java.lang:type=Runtime") RuntimeMXBean)
-		     *current-host* (let [ addr (. InetAddress getByName host)]
-				      (if (. addr isLoopbackAddress)
-					(. (. InetAddress getLocalHost) getCanonicalHostName)
-				      (. addr getCanonicalHostName)))]
-	       (fun connection)))))))
-  ([port-or-host vmname-or-port fun]
+(defn create-mbean-connector
+  "Returns a structure used to connect to a jmx server"
+  ([host port vmname]
+  (let [url (str "service:jmx:rmi:///jndi/rmi://"  host ":" port "/jmxrmi")
+	connector  (. JMXConnectorFactory newJMXConnector (JMXServiceURL. url) nil)]
+	 (assoc {} 
+		 :vmname vmname
+		 :connector connector
+		 :port port
+		 :host (try 
+			(let [ addr (. InetAddress getByName host)]
+			  (if (. addr isLoopbackAddress)
+			    (. (. InetAddress getLocalHost) getCanonicalHostName)
+			    (. addr getCanonicalHostName)))
+			(catch UnknownHostException _ host)))))
+  ([port-or-host vmname-or-port]
      (if (integer? port-or-host)
        (if (integer? vmname-or-port)
 	 (throw (IllegalArgumentException. (str "Both port-or-host and vmname-or-port can't be port."
-					       " That is, integers")))
-	 (using-jmx *current-host* port-or-host vmname-or-port fun))
+						" That is, integers")))
+	 (create-mbean-connector (remote-hostname) port-or-host vmname-or-port))
        (if (not (integer? vmname-or-port))
 	 (throw (IllegalArgumentException. "vmname-or-port has to be port. That is, integer, if port-or-host is host string"))  
-       (using-jmx port-or-host vmname-or-port *vmname* fun))))
+	 (create-mbean-connector port-or-host vmname-or-port (vmname)))))
+  ([port]
+     (create-mbean-connector (remote-hostname) port (vmname))))
+
+
+(defn adress-of-mbean-connection 
+  ([connection]
+  (when-let [port (:port connection)]
+    {:port port :host (:host connection)}))
+  ([]
+     (adress-of-mbean-connection 
+      *current-mbean-connection*))) 
+
+(defn closed? 
+  ([connection]
+     (not (:server connection)))
+  ([]
+     (closed? *current-mbean-connection*)))
+
+(defn close-mbean-connection 
+  ([connection]
+     (when-let [connector (:connector connection)]
+       (try (.close connector) (catch Exception e))
+       (let [cleaned (reduce #( assoc %1 (key %2) (val %2))
+			     {} 
+			     (filter #(some #{:host :connector :vmname :port} %) connection))]
+   
+	 (swap! mbean-connections (fn [current] 
+				    (if (get current connection)
+				      (conj (disj current connection) cleaned)
+				      current)))
+	 cleaned)))
+
+  ([] (close-mbean-connection *current-mbean-connection*)))
+
+(defn forget-about-mbean-connection-matching [requirement]
+  (swap! mbean-connections (fn [current]
+			     (let [matching (reduce 
+					     (fn [result con] 
+					       (if (every? #(= (get requirement %) (get con %))
+							   (keys requirement))
+						 (conj result con)
+						 result)) [] current)]
+			       (apply disj current matching)))))
+
+(defn remote-time 
+  ([connection]
+     (when-let [runtime (:runtime connection)]
+       (Date. (+ (. runtime getStartTime) (. runtime getUptime)))))
+([]
+   (remote-time *current-mbean-connection*)))
+  
+
+(defn remote-uptime
+  ([]
+     (remote-uptime *current-mbean-connection*))
+  ([connection-or-timeunit]
+     (if (associative? connection-or-timeunit)
+       (when-let [runtime (:runtime connection-or-timeunit)]
+	 (.getUptime runtime))
+       (remote-uptime *current-mbean-connection* connection-or-timeunit)))
+  ([connection timeUnit]
+     (. timeUnit convert (remote-uptime connection) (. TimeUnit MILLISECONDS))))
+     
+(defn mbean-server 
+  ([connection] 
+     (:server connection))
+  ([] 
+     (mbean-server *current-mbean-connection*)))
+
+(defn remote-pid
+  ([connection]
+     (when-let [runtime (:runtime connection)]
+       (let [name (. runtime getName)]
+	 (try
+	  (. Integer parseInt (second ( re-matches #"([0-9]+)@.*" name)))
+	  (catch NumberFormatException _)))))
+  ([]
+     (remote-pid *current-mbean-connection*)))
+
+
+(defn remote-hostname
+  ([]
+     (remote-hostname *current-mbean-connection*))
+  ([connection]
+     (:host connection)))
+
+(defn vmname
+  ([]
+     (vmname *current-mbean-connection*))
+  ([connection]
+     (:vmname connection)))
+
+(defmacro using-jmx-connection 
+  [connection & form]
+     `(binding [*current-mbean-connection* ~connection]
+	~@form))
+
+(defmacro using-jmx
+  [host port & form]
+  `(let [con# (create-mbean-connector ~host ~port)
+	opened# (open-mbean-connector con#)]
+    (try
+     (binding [*current-mbean-connection* opened#]
+       ~@form)
+     (finally (close-mbean-connection opened#)))))
+
+(defmacro using-named-jmx
+  [host port name & form]
+  `(let [con# (create-mbean-connector ~host ~port ~name)
+	opened# (open-mbean-connector con#)]
+    (try
+     (binding [*current-mbean-connection* opened#]
+       ~@form)
+     (finally (close-mbean-connection opened#)))))
+
+(defmacro using-named-jmx-port
+  [port name & form]
+  `(let [con# (create-mbean-connector ~port ~name)
+	opened# (open-mbean-connector con#)]
+    (try
+     (binding [*current-mbean-connection* opened#]
+       ~@form)
+     (finally (close-mbean-connection opened#)))))
+
+(defmacro using-jmx-port
+  [port & form]
+  `(let [con# (create-mbean-connector ~port)
+	opened# (open-mbean-connector con#)]
+    (try
+     (binding [*current-mbean-connection* opened#]
+       ~@form)
+     (finally (close-mbean-connection opened#)))))
+
+
+(deftest using-local-jmx
+  (is (= (.getName (. JMX newMXBeanProxy (:server *current-mbean-connection*)
+		      (ObjectName. "java.lang:type=Runtime") RuntimeMXBean))
+	 (.getName (ManagementFactory/getRuntimeMXBean )))))
+
+(deftest using-another-local-jmx
+  (if-let [jmxport (System/getProperty "com.sun.management.jmxremote.port")]
+    (let [port (Integer/parseInt jmxport)
+	  connector (create-mbean-connector port "silly")
+	  opened (open-mbean-connector connector)]
+      (try
+       (is (= 2 (count @mbean-connections)))
+       (is (= (.getName (ManagementFactory/getRuntimeMXBean )) 
+	      (.getName (:runtime opened))))
+       (is (not (= (vmname) (vmname opened))))
+       (using-jmx-connection opened
+		  (is (= (vmname) (vmname opened))))
+       (finally
+	(closed? (close-mbean-connection opened ))))
+      (using-named-jmx-port port "silly"
+		 (is (= (vmname) (vmname opened))))
+
+      (is (= 2 (count (filter #(closed? %) @mbean-connections))))
+      (forget-about-mbean-connection-matching {:port port})
+      (is (= 0 (count (filter #(closed? %) @mbean-connections))))
+      (is (= 1 (count @mbean-connections)))
+      (is (= port (:port (adress-of-mbean-connection opened)))))
+     
     
-  ([port fun]
-     (using-jmx *current-host* port *vmname* fun)))
+    
+    (throw (IllegalStateException. "jmx port is not defined" ))))
 
 
 
-(defn afun
-  [server]
-   (let [runtime (. JMX 
-		    newMXBeanProxy server 
-		    (ObjectName. "java.lang:type=Runtime") RuntimeMXBean)]
-     (str *vmname* " "  
-      (remote-hostname) " " 
-      (remote-pid runtime) " "
-      (remote-time) 
-      " Uptime:" (remote-uptime runtime TimeUnit/MINUTES) " min")))
 
 ;We can identify process name by pid in Process instance and pid in Perfmon Process and match that with the pid from runtime getName
 
 
   
-
