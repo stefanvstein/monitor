@@ -7,7 +7,7 @@ cd classes
 for e in `ls ../lib`; do jar xf ../lib/$e; done; 
 rm -rf META-INF
 cd ..
-java -cp lib/*:src clojure.main src/jarAll.clj src/manifest classes src release.jar
+java -cp lib/*:src clojure.main src/jarAll.clj src/manifest classes src monitor.jar
 #rm -rf classes
 
 

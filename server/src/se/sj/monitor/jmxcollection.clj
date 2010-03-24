@@ -3,7 +3,7 @@
   (:use (clojure.contrib repl-utils))
   (:import (java.util.concurrent TimeUnit)
 	   (javax.management JMX ObjectName)  
-	   (java.lang.management GarbageCollectorMXBean))
+	   (java.lang.management MemoryUsage ThreadMXBean))
 	   
 					; for testing purposes
   (:use clojure.test)
@@ -65,41 +65,42 @@
 									   after-gc (.getMemoryUsageAfterGc gcinfo)
 									   result [{:category "GarbageCollector"
 										    :counter "Last Duration"
-										    :instance name
+										    :section name
 										    :jvm (vmname)
 										    :host (remote-hostname)}
 										   (/ (.getDuration gcinfo) 1000.0)]
 									   usage-before (reduce (fn [result area]
+										;		  (println (str "Before " (key area) " " name " " (.getUsed (val area))))
 												  (conj result {:category "GarbageCollector"
 														 :counter "Usage Before Last"
-														 :instance name
+														 :instance (key area)
 														 :jvm (vmname)
 														 :host (remote-hostname)
-														 :section (key area)}
+														 :section name}
 													 (.getUsed (val area)))) [] before-gc)
 									   committed-after (reduce (fn [result area]
 												      (conj result {:category "GarbageCollector"
 														    :counter "Committed After Last"
-														    :instance name
+														    :instance (key area)
 														    :jvm (vmname)
 														    :host (remote-hostname)
-														    :section (key area)}
+														    :section name}
 													    (.getCommitted (val area)))) [] after-gc)
 									   max-after (reduce (fn [result area]
 												      (conj result {:category "GarbageCollector"
 														    :counter "Max After Last"
-														    :instance name
+														    :instance (key area)
 														    :jvm (vmname)
 														    :host (remote-hostname)
-														    :section (key area)}
+														    :section name}
 													    (.getMax (val area)))) [] after-gc)
 									   usage-after (reduce (fn [result area]
 												 (conj result {:category "GarbageCollector"
 														:counter "Usage After Last"
-														:instance name
+														:instance (key area)
 														:jvm (vmname)
 														:host (remote-hostname)
-														:section (key area)}
+														:section name}
 													(.getUsed (val area)))) [] after-gc)]
 								       (concat result usage-before usage-after committed-after max-after)
 								       )))))
@@ -121,20 +122,108 @@
 		      result (val a-key)))) 
 	  {} collector-keys))
 
-;(defn memory-fns [server]
-;  (let [poolbean (. JMX newMXBeanProxy server
-;		      (ObjectName. "java.lang:type=Runtime") RuntimeMXBean)
-;)
+(defn memory-fns [server]
+  (reduce (fn [r object-name] 
+	    (if (re-matches #"java.lang:type=MemoryPool,name=.*" (. object-name toString))
+	      (let [attributes (seq (. server getAttributes 
+				       object-name (into-array ["Usage" 
+								"Name"])))
+		    fns (reduce (fn [result attribut]
+				  (condp = (.getName attribut)
+				    "Usage" (conj result (fn [attributes] 
+							   (when-let [the-attribute (some #(when (= "Usage" (.getName %))
+											     %) attributes)]
+							     (when-let [name (some #(when (= "Name" (.getName %)) (.getValue %)) attributes)]
+							       ;(println (str "Use " name " " (.getUsed (MemoryUsage/from (.getValue the-attribute)))))
+							       [{:category "Memory"
+								 :counter "Usage"
+								 :instance name
+								 :jvm (vmname)
+								 :host (remote-hostname)}
+								(.getUsed (MemoryUsage/from (.getValue the-attribute)))])))) 
+				    
+				    result))
+				[] attributes)]
+		(assoc r object-name fns))
+	      r)) 
+	  {} (object-names server)))
+
+(defn thread-bean [server]
+  (let [bean (. JMX newMXBeanProxy server
+		      (ObjectName. "java.lang:type=Threading") ThreadMXBean)]
+    {:bean bean :cpuTime (.isThreadCpuTimeSupported bean) :contention (.isThreadContentionMonitoringSupported bean)}
+    ))
+
+(defn thread-info [thread-bean]
+  (let [bean (:bean thread-bean)
+	threadinfo (.getThreadInfo bean (.getAllThreadIds bean))
+	result (atom {})]
+    (dorun (map (fn [thread-info]
+		  (when (and (:cpuTime thread-bean) (.isThreadCpuTimeEnabled bean))
+		    (swap! result (fn [current] (assoc current {:category "Thread" 
+								:counter "CPU Time"
+								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
+								:jvm (vmname)
+								:host (remote-hostname)}
+						       (/ (.getThreadCpuTime bean (.getThreadId thread-info)) 1000000000.0)))))
+		  (swap! result (fn [current] (assoc current {:category "Thread" 
+								:counter "Block Count"
+								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
+								:jvm (vmname)
+								:host (remote-hostname)}
+						       (.getBlockedCount thread-info))))
+		  (swap! result (fn [current] (assoc current {:category "Thread" 
+								:counter "Waited Count"
+								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
+								:jvm (vmname)
+								:host (remote-hostname)}
+						       (.getWaitedCount thread-info))))
+		  (when (and (:contention thread-bean) (.isThreadContentionMonitoringEnabled bean))
+		    (swap! result (fn [current] (assoc current {:category "Thread" 
+								:counter "Waited Time"
+								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
+								:jvm (vmname)
+								:host (remote-hostname)}
+						       (/ (.getWaitedTime thread-info) 1000.0))))
+		     (swap! result (fn [current] (assoc current {:category "Thread" 
+								:counter "Blocked Time"
+								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
+								:jvm (vmname)
+								:host (remote-hostname)}
+						       (/ (.getBlockedTime thread-info) 1000.0)))))
+						       
+
+	      ) threadinfo))
+    @result))
+
+(defn memory-values [mem-fns server]
+  (reduce (fn [result a-fn] 
+	    (let [attributeList (.asList (.getAttributes server (key a-fn) (into-array ["Name" 
+											"Usage" ])))]
+	      (reduce (fn [re aval]
+			(let [r (aval attributeList)]
+			(apply assoc re r))) 
+		      result (val a-fn)))) 
+	  {} mem-fns))
 
 (defn- jmx-java6-impl
   [stop-fn]
-  (let [attribute-fns (collector-keys (mbean-server))]
+  (let [collector-fns (collector-keys (mbean-server))
+	mem-fns (memory-fns (mbean-server))
+	thread-beans (thread-bean (mbean-server))]
     (while (not (stop-fn))
 	   (let [the-time (remote-time)]
 
 	     (dorun (map (fn [i]  
 			   (add-data (key i) the-time (val i))) 
-			 (collector-values attribute-fns (mbean-server))))
+			 (collector-values collector-fns (mbean-server))))
+	     (dorun (map (fn [i]  
+			   (add-data (key i) the-time (val i))) 
+			 (memory-values mem-fns (mbean-server))))
+	     (dorun (map (fn [i]  
+			   (add-data (key i) the-time (val i))) 
+			 (thread-info thread-beans)))
+
 	     (add-data 
 	      {:host (remote-hostname) 
 	       :jvm (vmname) 

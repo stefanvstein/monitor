@@ -3,7 +3,6 @@
   (:use (se.sj.monitor gui)))
  
 (defn -main [& line]
-  (println line)
   (if (not (empty? line))
     (when (= (first line) "server")
       (if (next line) 
