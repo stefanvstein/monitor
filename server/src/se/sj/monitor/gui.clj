@@ -1,7 +1,6 @@
 (ns se.sj.monitor.gui
   (:use (clojure stacktrace))
-  (:use (se.sj.monitor analysis))
-;  (:use [se.sj.monitor.analysisWindow :only (add-dialog)])
+  (:use (se.sj.monitor analysis runtime))
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
@@ -138,12 +137,6 @@
        (.dispose frame)
        (exit))))
 
-(defn new-runtime-panel []
-  {:panel (JButton. "Runtime panel")})
-
-
-
-
 
 
 (defn add-analysis [contents]
@@ -151,15 +144,17 @@
     (JOptionPane/showMessageDialog 
      (:panel contents) "Not connected" 
      "Error" JOptionPane/ERROR_MESSAGE)
-  (let [dialog (add-dialog contents server)]
+  (let [dialog (analysis-add-dialog contents server)]
     (doto dialog
       (.pack)
       (.setVisible true)))))
 
 (defn add-runtime [contents]
-(JOptionPane/showMessageDialog 
-  (:panel contents) "Not yet implemented" 
- "Error" JOptionPane/ERROR_MESSAGE))
+
+ (let [dialog (runtime-add-dialog contents server)]
+    (doto dialog
+      (.pack)
+      (.setVisible true))))
 
 	 
 (defn add [contents]

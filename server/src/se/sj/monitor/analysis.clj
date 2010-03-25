@@ -1,7 +1,6 @@
 (ns se.sj.monitor.analysis
   (:use (clojure stacktrace))
-;  (:use (se.sj.monitor gui))
-; (:use [se.sj.monitor.gui :only (server)])
+  (:use (se.sj.monitor commongui))
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
@@ -181,7 +180,7 @@
 		   "Data Retriever")))
 
 
-(defn add-dialog [contents server]
+(defn analysis-add-dialog [contents server]
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
 	from (let [model (SpinnerDateModel.)
 		   spinner (JSpinner. model)]
@@ -217,7 +216,7 @@
 
     (doto dialog
       (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
-      (.setResizable true))
+      (.setResizable false))
 
     (.addActionListener close (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
     (.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd))))
@@ -254,57 +253,24 @@
 (defn new-analysis-panel [] 
   (let [panel (JPanel.)
 	color-cycle (atom (cycle colors)) 
-	table-columns (atom [:color])
-	table-rows (atom [])
-	table-model (proxy [AbstractTableModel] []
-		      (getRowCount [] (count @table-rows))
-		      (getColumnCount [] (count @table-columns))
-		      (getColumnName [column] (name (get @table-columns column))) 
-		      (getValueAt [row column]
-				  (let [the-keyword (nth @table-columns column)]
-				    (if (= 0 column) 
-				      (:color (get @table-rows row))
-				     (the-keyword (:data (get @table-rows row))))))
-		      (getColumnClass [column] (if (= 0 column) Color Object)))
-	add-row (fn [data color name] 
-		  (let [internal-data {:data data :color color :name name}] 
-		    (when-not (some #(= (:name internal-data) (:name %)) @table-rows)
-		      (swap! table-rows (fn [rows] (conj rows internal-data)))
-		      (.fireTableDataChanged table-model))))
-
-	add-column (fn [k-word]
-		     (when-not (some #(= k-word %) @table-columns)
-		       (swap! table-columns (fn [cols] (conj cols k-word)))
-		       (.fireTableStructureChanged table-model)))
-
 	time-series (TimeSeriesCollection.)
 	chart (ChartFactory/createTimeSeriesChart 
 					      nil nil nil 
 					      time-series false false false)
-	remove-row (fn [row] 
-		     (.removeSeries time-series row)
-		     (swap! table-rows (fn [rows] 
-					 (let [begining (subvec rows 0 row )
-					       end (subvec rows (+ 1 row) (count rows))]
-					   (println begining)
-					   (println end)
-					   (if (empty? end)
-					     begining
-					     (apply conj begining end))
-					   )))
-		     (.fireTableDataChanged table-model)
-		     ;recolor 
-		     
-		     (dotimes [n (count @table-rows)]
-				   (.. chart (getPlot) (getRenderer) (setSeriesPaint n (:color (get @table-rows n))))))
+	tbl-model (create-table-model
+		   (fn [row-num] 
+		     (.removeSeries time-series row-num))
+		   (fn [row-num color]
+		     (.. chart (getPlot) (getRenderer) (setSeriesPaint row-num color))))
+
 	table (JTable.)
 	current-row (atom nil)
 	popupMenu (doto (JPopupMenu.)
 		    (.add ( doto (JMenuItem. "Delete")
 			    (.addActionListener (proxy [ActionListener] []
 						  (actionPerformed [event]
-								   (println (str "Deleteing " @current-row))
-								   (remove-row @current-row)))))))
+								   ((:remove-row tbl-model) @current-row)))))))
+
 	popup (fn [event]
 		(let [x (.getX event)
 		      y (.getY event)
@@ -330,7 +296,7 @@
 							     (.setOpaque true)
 							     (.setBackground color)
 							     ))))
-						       (.setModel table-model)
+						       (.setModel (:model tbl-model))
 						       (.setCellSelectionEnabled false)
 						       (.setName "table")
 						       (.addMouseListener (proxy [MouseAdapter] []
@@ -344,8 +310,8 @@
 	      (.setTopComponent (doto (ChartPanel. 
 				       (doto chart)))))))
     {:panel panel 
-     :add-to-table add-row
-     :add-column add-column
+     :add-to-table (:add-row tbl-model)
+     :add-column (:add-column tbl-model)
      :chart chart
      :colors (fn [] (first (swap! color-cycle (fn [cyc] (rest cyc)))))
      :time-series time-series}))
