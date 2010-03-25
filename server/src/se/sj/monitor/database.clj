@@ -67,9 +67,14 @@
   ([pred lower upper]
      {:pre [(instance? java.util.Date lower)
 	    (instance? java.util.Date upper)]}
-     (let [df (java.text.SimpleDateFormat. date-format)
-	   within-dates #( and (<= (.getTime lower) (.getTime (second %)))
-			       (>= (.getTime upper) (.getTime (second %))))
+     (println (str lower " - " upper))
+     (let [start (System/currentTimeMillis)
+	   items (atom 0)
+	   df (java.text.SimpleDateFormat. date-format)
+	   within-dates (fn [d] 
+			  (swap! items (fn [i] (inc i)))
+			  (and (<= (.getTime lower) (.getTime (second d)))
+			       (>= (.getTime upper) (.getTime (second d)))))
 	   names-for-day #(all-in-every (fn [seq-of-data] 
 					  (reduce (fn [a-set a-result] 
 						    (conj a-set (first a-result))) 
@@ -79,7 +84,7 @@
        
        (if (> (. lower getTime) (. upper getTime))
 	 nil
-	 (seq (reduce (fn [result-set names-for-a-day]
+	 (let [res (seq (reduce (fn [result-set names-for-a-day]
 		   (let [filtered-data (filter pred names-for-a-day)]
 		     (if (empty? filtered-data)
 		       result-set
@@ -87,7 +92,9 @@
 		 #{}
 		 (map (fn [day]
 			(names-for-day day))
-		      (day-seq lower upper))))))))
+		      (day-seq lower upper))))]
+	   (println (double (/ @items (/ (- (System/currentTimeMillis) start) 1000.0))))
+	   res)))))
 
 
 

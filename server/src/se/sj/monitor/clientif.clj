@@ -6,7 +6,7 @@
   (:import (java.net ServerSocket Socket InetAddress SocketTimeoutException))
 (:import (java.util HashMap TreeMap))
   (:use (clojure stacktrace test))
-  (:use (clojure.contrib str-utils duck-streams))
+  (:use (clojure.contrib str-utils duck-streams profile))
   (:use (se.sj.monitor database))
   (:use cupboard.utils))
 
@@ -75,10 +75,14 @@
     (java.util.ArrayList. result)))
  
 (defn raw-names [from to]
-  (java.util.ArrayList. (reduce (fn [result a-name]
-	    (conj result (HashMap. (keyworded-names-as-string a-name))))
-	  [] 
-	  (names-where (fn [_] true) from to))))
+  (let [start (System/currentTimeMillis)
+	res (java.util.ArrayList. (reduce (fn [result a-name]
+					 (conj result (HashMap. (keyworded-names-as-string a-name))))
+				       [] 
+				       (names-where (fn [_] true) from to)))]
+    (println (- (System/currentTimeMillis) start))
+    res))
+  
 
 (defmacro serve-clients [port transfer-port stop-fn & form]
   `(let [remote# (atom nil)
