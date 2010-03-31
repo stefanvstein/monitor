@@ -52,20 +52,33 @@
     final-result))
 
 
+;(defn raw-live-data [names]
+;  (let [keyed-names (names-as-keyworded names)
+;       result (data-by (fn [a-name] 
+;			 (every? (fn [requirement] 
+;				   (= ((key requirement) a-name) 
+;				      (val requirement))) 
+;				 keyed-names)))
+;	final-result (HashMap.)] 
+;	(dorun (map (fn [row]
+;		  (. final-result put (HashMap. (keyworded-names-as-string (key row))) (TreeMap. (val row))))
+;		 result))
+;	final-result
+;
+;    ))
+
 (defn raw-live-data [names]
-  (let [keyed-names (names-as-keyworded names)
-       result (data-by (fn [a-name] 
+  (let [keyworded-names (reduce (fn [r i] (conj r (names-as-keyworded i))) [] names)
+	result (reduce (fn [r i] (merge r (data-by (fn [a-name] 
 			 (every? (fn [requirement] 
 				   (= ((key requirement) a-name) 
 				      (val requirement))) 
-				 keyed-names)))
-	final-result (HashMap.)] 
-	(dorun (map (fn [row]
+				 i))))) {} keyworded-names)
+		final-result (HashMap.)] 
+    (dorun (map (fn [row]
 		  (. final-result put (HashMap. (keyworded-names-as-string (key row))) (TreeMap. (val row))))
-		 result))
-	final-result
-
-    ))
+		result))
+    final-result))
 
 (defn raw-live-names []
   (let [result (reduce (fn [result a-name]
@@ -137,16 +150,16 @@
      (add-data {:host "Arne" :counter "Olle"} (dparse "20100101 100002") 2)
      (add-data {:host "Arne" :counter "Nisse"} (dparse "20100101 100003") 3)
      (add-data {:host "Bengt" :counter "Olle"} (dparse "20100101 100004") 4)
-     (is (= (raw-live-data {"host" "Arne"}) 
+     (is (= (raw-live-data [{"host" "Arne"}]) 
 	    {{"host" "Arne" "counter" "Nisse"} { (dparse "20100101 100001") 1  
 						 (dparse "20100101 100003") 3}
 	     {"host" "Arne" "counter" "Olle"} { (dparse "20100101 100002") 2}})) 
-     (is (= (raw-live-data {"host" "Arne" "counter" "Olle"}) 
+     (is (= (raw-live-data [{"host" "Arne" "counter" "Olle"}]) 
 	    {{"host" "Arne" "counter" "Olle"} { (dparse "20100101 100002") 2}})) 
-     (is (= (raw-live-data {"counter" "Olle"}) 
+     (is (= (raw-live-data [{"counter" "Olle"}]) 
 	    {{"host" "Arne" "counter" "Olle"} { (dparse "20100101 100002") 2}
 	     {"host" "Bengt" "counter" "Olle"} {(dparse "20100101 100004") 4}})) 
-     (is (= (raw-live-data {"host" "Nisse"}) {}))
+     (is (= (raw-live-data [{"host" "Nisse"}]) {}))
      (is (= (set (raw-live-names)) #{{"host" "Arne" "counter" "Olle"} 
 			       {"host" "Arne" "counter" "Nisse"}
 			       {"host" "Bengt" "counter" "Olle"}}))
@@ -203,7 +216,7 @@
      (add-data {:host "Arne" :counter "Nisse"} (dparse "20100101 100003") 3)
      (add-data {:host "Bengt" :counter "Olle"} (dparse "20100101 100004") 4)
 
-     (let [res (raw-live-data (HashMap. {:host "Arne"}))]
+     (let [res (raw-live-data [(HashMap. {:host "Arne"})])]
        (is (instance? HashMap res))
        (is (instance? HashMap (key (first res))))
        (is (instance? TreeMap (val (first res)))) 

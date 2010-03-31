@@ -9,7 +9,7 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
-
+import java.util.ArrayList;
 
 
 public class Test {
@@ -22,8 +22,10 @@ public static void main(String[] args) throws UnknownHostException, IOException,
 	ServerInterface server = (ServerInterface) os.readObject();
 	//cl.enable(server);
 	System.out.println(server.rawLiveNames());
-	Map<String, String> names =new HashMap<String,String>();
-	names.put("instance", "0");
+	ArrayList<Map<String, String>> names =new ArrayList<Map<String,String>>();
+	HashMap<String, String> first = new HashMap<String, String>();
+	names.add(first);
+	first.put("instance", "0");
 	System.out.println(server.rawLiveData(names));
 	Date d1 =new Date(System.currentTimeMillis()-60*1000);
 	Date d2=new Date();

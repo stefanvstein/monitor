@@ -16,81 +16,9 @@
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart))
   (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond)))
 
-(def colors [Color/black Color/red Color/blue Color/green Color/yellow Color/cyan Color/magenta Color/orange Color/pink (Color. 205 133 063) Color/darkGray (Color. 144 238 144) (Color. 139 0 0) (Color. 139 0 139) (Color. 205 104 057) (Color. 192 255 062) (Color. 238 213 210) (Color. 255 215 000) (Color. 239, 222, 205) (Color. 120, 219, 226) (Color. 135, 169, 107) (Color. 159, 129, 112) (Color. 172, 229, 238) (Color. 162, 162, 208) (Color. 206, 255, 29) (Color. 205, 74, 76) (Color. 142, 69, 133) (Color. 113, 75, 35)(Color. 205, 197, 194) ])
-
-
-(defn- names-as-keyworded [names]
-  (reduce (fn [result name]
-	    (assoc result (keyword (key name)) (val name))) 
-	  {} names))
-
-(defn get-names [from to server]
-  (let [raw-names (.rawNames (server) from to)
-	names (reduce (fn [result a-map]
-			(conj result (names-as-keyworded a-map))) [] raw-names)]
-    (reduce (fn [result name]
-	      (reduce (fn [r per-subname] 
-			(if-let [this-name (get result (key per-subname))]
-			  (assoc r (key per-subname) (conj this-name (val per-subname)))
-			  (assoc r (key per-subname) [(val per-subname)])))
-		      result 
-		      (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
-	       (sorted-map) names)))
-
-(defn get-data [from to names server]
-  (let [stringed-names (interleave 
-			(map #(name (first %)) (partition 2 names)) 
-			(map #(second %) (partition 2 names)))
-	data (.rawData (server) from to (java.util.ArrayList. stringed-names))]
-    (reduce (fn [result a-data] 
-	      (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
-	    {} data)))
 
 (defn on-update [names combomodels-on-center centerPanel add-button]
-  (let [
-	combos-on-center (atom [])
-	placeholder-for-combo-action (atom nil)
-	combo-action (proxy [ActionListener] []
-		      (actionPerformed 
-		       [event]
-		       (let [requirements 
-			     (reduce (fn [requirements keyword-model]
-				       (assoc requirements 
-					 (key keyword-model) 
-					 (.getSelectedItem (val keyword-model)))
-				       ) 
-				     {} 
-				     (filter #(not (= "" (. (val %) getSelectedItem))) @combomodels-on-center))]
-			 (dorun (map (fn [combo] (.removeActionListener combo @placeholder-for-combo-action)) @combos-on-center))
-			 (dorun (map (fn [keyword-model] 
-				       (let [current-model (val keyword-model)
-					     current-keyword (key keyword-model)
-					     current-name (name current-keyword)
-					     currently-selected (.getSelectedItem current-model)]
-					 (.removeAllElements current-model)
-					 (.addElement current-model "")
-					 
-					 (let [toadd (reduce (fn [toadd row]
-							       (if (every? 
-								    #(some (fn [a-data] (= % a-data)) row) 
-								    (dissoc requirements current-keyword))
-								 (let [element (get row current-keyword)]
-								   (conj toadd element))
-								 toadd))
-							     #{} (current-keyword names))]
-					   (dorun (map (fn [el] (. current-model addElement el)) toadd)))
-					 (.setSelectedItem current-model currently-selected))) 
-				     @combomodels-on-center))
-			 
-			 (dorun (map (fn [combo] (.addActionListener combo @placeholder-for-combo-action)) @combos-on-center))
-			 (dorun (map (fn [combo] (if (= 1 (.getItemCount combo))
-						   (.setEnabled combo false)
-						   (.setEnabled combo true))) 
-				     @combos-on-center))
-			 (if (every? (fn [model]  (= "" (.getSelectedItem model))) (vals @combomodels-on-center))
-			   (.setEnabled add-button false)
-			   (.setEnabled add-button true)))))]
-    (swap! placeholder-for-combo-action (fn [_] combo-action))
+  (let [combos-on-center (atom [])]
     (dorun (map #(do (. centerPanel remove %)) (.getComponents centerPanel)))
     (swap! combomodels-on-center (fn [_] {}))
     (swap! combos-on-center (fn [_] []))
@@ -109,7 +37,7 @@
 					  #{} (val a-name))]
 			(dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
 		      (. combo setName field-name)
-		      (. combo addActionListener combo-action)
+		      
 		      (. centerPanel add label (GridBagConstraints. 
 						0 GridBagConstraints/RELATIVE 
 						1 1 
@@ -129,7 +57,10 @@
 		      (swap! labelsOnCenter (fn [l] (conj l label)))
 		      (swap! combos-on-center (fn [l] (conj l combo)))
 		      (swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel)))))
-		  names)))))
+		  names)))
+    (let [combo-action (create-comboaction @combomodels-on-center @combos-on-center add-button names)]
+      (dorun (map (fn [combo] (.addActionListener combo combo-action)) @combos-on-center))
+    )))
 
 			
 (defn on-add-to-analysis [from to name-values graph colors chart add-to-table add-column server]
@@ -252,7 +183,7 @@
 
 (defn new-analysis-panel [] 
   (let [panel (JPanel.)
-	color-cycle (atom (cycle colors)) 
+;	color-cycle (atom (cycle colors)) 
 	time-series (TimeSeriesCollection.)
 	chart (ChartFactory/createTimeSeriesChart 
 					      nil nil nil 
@@ -313,6 +244,6 @@
      :add-to-table (:add-row tbl-model)
      :add-column (:add-column tbl-model)
      :chart chart
-     :colors (fn [] (first (swap! color-cycle (fn [cyc] (rest cyc)))))
+     :colors (color-cycle)
      :time-series time-series}))
 

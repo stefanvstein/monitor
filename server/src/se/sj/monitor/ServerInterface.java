@@ -12,7 +12,7 @@ public interface ServerInterface extends Remote{
 	
 	Map<String, SortedMap<Date, Double>> rawData(Date from, Date to, Iterable<String> nameSpec)
 	throws RemoteException;
-	Map<String, SortedMap<Date, Double>> rawLiveData(Map<String, String> names)
+	Map<String, SortedMap<Date, Double>> rawLiveData(Iterable<Map<String, String>> names)
 	throws RemoteException;
 	Iterable<Map<String, String>> rawLiveNames() throws RemoteException;
 	Iterable<Map<String, String>> rawNames(Date from, Date to) throws RemoteException;

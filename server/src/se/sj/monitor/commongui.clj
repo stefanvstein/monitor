@@ -1,7 +1,68 @@
 (ns se.sj.monitor.commongui
 (:import (javax.swing.table AbstractTableModel))
 (:import (java.awt Color))
+ (:import (java.awt.event ActionListener))
 )
+
+
+(defn color-cycle []
+  (let [ colors [Color/black Color/red Color/blue Color/green Color/yellow Color/cyan Color/magenta Color/orange Color/pink (Color. 205 133 063) Color/darkGray (Color. 144 238 144) (Color. 139 0 0) (Color. 139 0 139) (Color. 205 104 057) (Color. 192 255 062) (Color. 238 213 210) (Color. 255 215 000) (Color. 239, 222, 205) (Color. 120, 219, 226) (Color. 135, 169, 107) (Color. 159, 129, 112) (Color. 172, 229, 238) (Color. 162, 162, 208) (Color. 206, 255, 29) (Color. 205, 74, 76) (Color. 142, 69, 133) (Color. 113, 75, 35)(Color. 205, 197, 194) ]
+	colorcycle (atom (cycle colors))]
+    (fn [] (first (swap! colorcycle (fn [cyc] (rest cyc)))))))
+
+(defn names-as-keyworded [names]
+  (reduce (fn [result name]
+	    (assoc result (keyword (key name)) (val name))) 
+	  {} names))
+
+(defn get-names ([from to server]
+  (let [raw-names (.rawNames (server) from to)
+	names (reduce (fn [result a-map]
+			(conj result (names-as-keyworded a-map))) [] raw-names)]
+    (reduce (fn [result name]
+	      (reduce (fn [r per-subname] 
+			(if-let [this-name (get result (key per-subname))]
+			  (assoc r (key per-subname) (conj this-name (val per-subname)))
+			  (assoc r (key per-subname) [(val per-subname)])))
+		      result 
+		      (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
+	       (sorted-map) names)))
+  ([server]
+     (let [raw-names (.rawLiveNames server)
+	   names (reduce (fn [result a-map]
+			   (conj result (names-as-keyworded a-map))) [] raw-names)]
+       (reduce (fn [result name]
+		 (reduce (fn [r per-subname] 
+			   (if-let [this-name (get result (key per-subname))]
+			     (assoc r (key per-subname) (conj this-name (val per-subname)))
+			     (assoc r (key per-subname) [(val per-subname)])))
+			 result 
+			 (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
+	       (sorted-map) names))))
+
+(defn get-data 
+  ([from to names server]
+  (let [stringed-names (interleave 
+			(map #(name (first %)) (partition 2 names)) 
+			(map #(second %) (partition 2 names)))
+	data (.rawData (server) from to (java.util.ArrayList. stringed-names))]
+    (reduce (fn [result a-data] 
+	      (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
+	    {} data)))
+  ([names server]
+     (let [stringed-names-in-hashmaps (reduce 
+				       (fn [r i]
+					 (conj r (java.util.HashMap. 
+						  (reduce 
+						   (fn [a b]
+						     (assoc a (name (key b)) (val b))) 
+						   {} i)))
+					 ) [] names)
+	   data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps))]
+       (reduce (fn [result a-data] 
+		 (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
+	       {} data))
+     ))
 
 (defn create-table-model [remove-graph-fn recolor-graph-fn] 
   "rows and columns is expected to be atom []. Column 0 is expected to be a color"
@@ -47,7 +108,7 @@
 
 
 
-(defn create-comboaction [combo-models combos add-button]
+(defn create-comboaction [combo-models combos add-button names]
   (let [place-holder (atom nil)
 	action (proxy [ActionListener] []
 		 (actionPerformed [event]
