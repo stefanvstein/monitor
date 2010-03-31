@@ -60,7 +60,7 @@
 					 ) [] names)
 	   data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps))]
        (reduce (fn [result a-data] 
-		 (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
+		 (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (val a-data)))) 
 	       {} data))
      ))
 

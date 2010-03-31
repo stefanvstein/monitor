@@ -119,6 +119,7 @@
      :add-to-table (:add-row tbl-model)
      :watched-names watched-names
      :add-column (:add-column tbl-model)
+     :remove-row (:remove-row tbl-model)
      :colors (color-cycle)
      }))
 
@@ -138,8 +139,11 @@
 
 
 (defn get-data-for [name]
-  (swap! runtime-names-of-interest (fn [current] (conj current name))) 
-  (get @all-runtime-data name))
+  (let [data (get @all-runtime-data name)]
+    ;(println (str name ":" data)) 
+    (when (not (empty? data))
+      (swap! runtime-names-of-interest (fn [current] (conj current name))))
+    data))
 
 (defn update-table-and-graphs [contents]
   (let [table-model (:table-model contents)
@@ -156,7 +160,7 @@
 	columns-to-be-added (difference columns-in-watched current-columns)
 	add-columns #(dorun (map (fn [c] ((:add-column contents) c)) %))
 	new-trace-row #(let [color ((:colors contents))
-			     trace  (doto (Trace2DLtdReplacing. 100)
+			     trace  (doto (Trace2DLtdReplacing. 1000)
 				      
 				      (.setTracePainter (proxy [TracePainterLine] [] 
 							  ( paintPoint [absoluteX, absoluteY, nextX, nextY, g,  original]
@@ -184,13 +188,23 @@
 				       (swap! name-trace-rows (fn [current] 
 							       (assoc current unique-name trace-row)))
 				       trace-row)))
-		       trace (first trace-row)]
+		       trace (first trace-row)
+		       data (get-data-for a-name)]
+		   (if (empty? data)
+		     (do
+		       (println (str a-name " is Empty"))
+					;(swap! (:watched-names contents) (fn [current] (disj current a-name)))
+		       (println (str "Trying to get " a-name " from " @name-trace-rows))
+		       (when-let [row  (second (get @name-trace-rows a-name))]
+			 (println (str "Got it: " row))
+			 ((:remove-row contents) row)))
+			    		   
 
-		   (dorun (map 
-			   (fn [data]
-			     ;(println (str "Data " data))
-			     (.addPoint trace (TracePoint2D. (.getTime (key data)) (val data)))) 
-			     (get-data-for a-name)))
+		     (dorun (map 
+			     (fn [data]
+			       
+			       (.addPoint trace (TracePoint2D. (.getTime (key data)) (val data)))) 
+			     data)))
 		   )) 
 	       watched-names))))
 
