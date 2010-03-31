@@ -21,13 +21,28 @@
 
 (defn new-runtime-panel []
   (let [panel (JPanel.)
-
+	chart (Chart2D.)
+	name-trace-row (atom {})
+	watched-names (atom #{})
 	table (JTable.)
 	tbl-model (create-table-model
-		   (fn [row-num] 
-		     )
-		   (fn [row-num color]
-		     ))
+		   (fn [row-num]
+;		     (println (str "Name-trace-row: " (class (key (first @name-trace-row)))))
+;		     (println (str "watched names : " (class (first @watched-names))))
+;		     (println (=  (key (first @name-trace-row)) (first @watched-names)))
+		       
+		     (swap! name-trace-row (fn [current]
+					     (reduce (fn [r i]
+						       (let [row (second (val i))]
+							 (if (= row row-num)
+							   (do
+							     (.removeTrace chart (first (val i)))
+							     (swap! watched-names (fn [c] (disj c (key i))))
+							     (dissoc r (key i)))
+							   (if (< row-num row)
+							     (assoc r (key i) [(first (val i)) (dec (second (val i)))])
+							     r)))) current current))))
+		   (fn [row-num color]))
 	current-row (atom nil)
 	popupMenu (doto (JPopupMenu.)
 		    (.add ( doto (JMenuItem. "Delete")
@@ -41,7 +56,7 @@
 		  (swap! current-row (fn [_] (.convertRowIndexToModel table row)))
 		  (.show popupMenu table x y)))
 	panel (JPanel.)
-	chart (Chart2D.)
+
 	axis-bottom (AxisLinear.)]
     
     (doto chart
@@ -68,37 +83,11 @@
       (.setPaintGrid true))  
     
       
-;Test
-      (let [trace (doto (Trace2DLtdReplacing. 100)
-		    (.setTracePainter (proxy [TracePainterLine] [] 
-					( paintPoint [absoluteX, absoluteY, nextX, nextY, g,  original]
-						     (if-let [prev (proxy-super getPreviousPoint)]
-						       (if (or (.isNaN (.getY original)) (.isNaN (.getY prev)))
-							 (let [c (.getColor g)]
-							   (.setColor g (Color. 255,0,0,0))
-							   (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original)
-							   (.setColor g c))
-							 (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original))
-						       (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original)))))
-					
-					
-		    (.setColor Color/BLUE)
-		    (.addPoint (TracePoint2D. 100000 5000))
-		    (.addPoint (TracePoint2D. 150000 2000))
-		    (.addPoint (TracePoint2D. 151000 3000))
-		    (.addPoint (TracePoint2D. 152000 Double/NaN))
-		    (.addPoint (TracePoint2D. 200000 6000))
-		    (.addPoint (TracePoint2D. 210000 6000)))]
-	(.addTrace chart trace))
-    ;test
-
     (doto panel
       (.setLayout (BorderLayout.))
       (.add (doto (JSplitPane.)
 	      (.setOrientation JSplitPane/VERTICAL_SPLIT)
 	      (.setName "splitPane")
-;	      (.setDividerLocation 200)
-	      ;(.resetToPreferredSizes)
 	      (.setBottomComponent (doto (JScrollPane.)
 				    
 				   (.setViewportView (doto table
@@ -125,10 +114,10 @@
 	      (.setTopComponent chart ))))
     {:panel panel 
      :chart chart
-     :name-trace-row (atom {})
+     :name-trace-row name-trace-row 
      :table-model (:model tbl-model)
      :add-to-table (:add-row tbl-model)
-     :watched-names (atom #{})
+     :watched-names watched-names
      :add-column (:add-column tbl-model)
      :colors (color-cycle)
      }))
@@ -185,9 +174,9 @@
 			 (.addTrace (:chart contents) trace)
 			 [trace row])]
    (add-columns columns-to-be-added)
-;   (println (str (count (.getTraces (:chart contents))) "traces"))
+					;   (println (str (count (.getTraces (:chart contents))) "traces"))
    (dorun (map (fn [a-name] 
-		 (let [unique-name (str (merge (sorted-map) a-name))
+		 (let [unique-name a-name ;(str (merge (sorted-map) a-name))
 		       trace-row (do
 				   (if-let [trace-row (get @name-trace-rows unique-name)]
 				     trace-row
