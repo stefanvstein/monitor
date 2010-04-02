@@ -23,7 +23,11 @@
 (defn redraw []
      (dorun (map (fn [frame] (.revalidate frame)) @frames)))
 
-(def *shutdown* #(println "Shutdown :)"))
+(def *shutdown* #(do 
+		   (println "Shutdown :)")
+		   (when-let [t @runtime-thread]
+		     (swap! runtime-thread (fn [t] nil))
+		     (.stop t))))
 (def current-server (atom nil))
 (try
  (UIManager/setLookAndFeel (UIManager/getSystemLookAndFeelClassName))
@@ -117,8 +121,21 @@
   ([host port]
   (with-open [s (Socket. host port)
 	      ois (ObjectInputStream. (.getInputStream s))]
-    (let [server (.readObject ois)]
-	(swap! current-server (fn [_] server)))))
+    (let [serv (.readObject ois)]
+	(swap! current-server (fn [_] serv)))
+    (when (not @runtime-thread)
+      (swap! runtime-thread (fn [_] 
+			      (let [t (doto (Thread. #(while true
+							     (try
+							      (Thread/sleep 15000)
+							      (get-new-data  server)
+							      (catch Exception e
+								(print-cause-trace e)
+								(println))))
+						     "Runtime collector")
+				       (.setDaemon true))]
+				(.start t)
+				t))))))
 
   ([frame]
      (connect-dialog frame)
@@ -165,7 +182,7 @@
 (defn new-window [analysis]
   
   (let [frame (JFrame.)
-	contents (if analysis (new-analysis-panel) (new-runtime-panel))]
+	contents (if analysis (new-analysis-panel) (new-runtime-panel frame))]
     (swap! frames #(conj % frame))
     (doto frame 
       (.setDefaultCloseOperation (JFrame/DISPOSE_ON_CLOSE))

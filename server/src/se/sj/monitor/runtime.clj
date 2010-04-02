@@ -18,8 +18,9 @@
   (:import (info.monitorenter.gui.chart.traces.painters TracePainterLine TracePainterDisc))
 )
 
+(def runtimes (atom #{}))
 
-(defn new-runtime-panel []
+(defn new-runtime-panel [frame]
   (let [panel (JPanel.)
 	chart (Chart2D.)
 	name-trace-row (atom {})
@@ -58,7 +59,17 @@
 	panel (JPanel.)
 
 	axis-bottom (AxisLinear.)]
-    
+    (.addWindowListener frame (proxy [WindowAdapter] []
+			       (windowClosed [e] (println "Window Closed")
+					     (println (count @runtimes))
+					     (swap! runtimes (fn [current]
+							       (let [window (.getWindow e)]
+								 (reduce (fn [r i]
+									   (if (= window (SwingUtilities/windowForComponent (:panel i)))
+									     (disj r i)
+									     r)
+									   ) current current))))
+					     (println (count @runtimes)))))
     (doto chart
       (.setMinimumSize (Dimension. 100 100))
       (.setPreferredSize (Dimension. 300 200))
@@ -112,6 +123,7 @@
 											     (popup event)))))
 						       (.setAutoCreateRowSorter true)))))
 	      (.setTopComponent chart ))))
+(let [r
     {:panel panel 
      :chart chart
      :name-trace-row name-trace-row 
@@ -121,22 +133,18 @@
      :add-column (:add-column tbl-model)
      :remove-row (:remove-row tbl-model)
      :colors (color-cycle)
-     }))
+     }]
+  (swap! runtimes #(conj % r)) 
+  r)))
 
 (def all-runtime-data (atom {}))
 (def all-runtime-names (atom #{}))
 (def runtime-names-of-interest (atom #{}))
-(defn update-runtime-data
-  [data]
-  (swap! all-runtime-data (fn [current] data))
-  (swap! runtime-names-of-interest (fn [_] #{}))
-  ;update listeners
-  (swap! all-runtime-names (fn [current]
-			     (reduce (fn [r i]
-				       (conj r i)) 
-				     #{}
-				     @runtime-names-of-interest))))
 
+
+
+(def runtime-thread (atom nil))
+	
 
 (defn get-data-for [name]
   (let [data (get @all-runtime-data name)]
@@ -192,17 +200,10 @@
 		       data (get-data-for a-name)]
 		   (if (empty? data)
 		     (do
-		       (println (str a-name " is Empty"))
-					;(swap! (:watched-names contents) (fn [current] (disj current a-name)))
-		       (println (str "Trying to get " a-name " from " @name-trace-rows))
 		       (when-let [row  (second (get @name-trace-rows a-name))]
-			 (println (str "Got it: " row))
 			 ((:remove-row contents) row)))
-			    		   
-
 		     (dorun (map 
 			     (fn [data]
-			       
 			       (.addPoint trace (TracePoint2D. (.getTime (key data)) (val data)))) 
 			     data)))
 		   )) 
@@ -287,3 +288,20 @@
     dialog
 
 ))
+
+(defn update-runtime-data []
+  (swap! runtime-names-of-interest (fn [_] #{}))
+  ;update listeners
+  (dorun (map #(update-table-and-graphs %) @runtimes))
+  (swap! all-runtime-names (fn [current]
+			     (reduce (fn [r i]
+				       (conj r i)) 
+				     #{}
+				     @runtime-names-of-interest))))
+
+
+(defn get-new-data [server]
+  (let [data (get-data @all-runtime-names server)]
+    (swap! all-runtime-names (fn [current] (apply conj current (keys data))))
+    (swap! all-runtime-data (fn [all] (merge all data)))
+    (SwingUtilities/invokeAndWait update-runtime-data)))
