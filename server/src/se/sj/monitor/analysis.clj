@@ -5,7 +5,7 @@
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
 			DefaultComboBoxModel GroupLayout GroupLayout$Alignment JPopupMenu
-			BorderFactory))
+			BorderFactory JSpinner$DateEditor))
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
@@ -13,6 +13,7 @@
   (:import (java.awt.event WindowAdapter ActionListener MouseAdapter))
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
+  (:import (java.util Calendar))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart))
   (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond)))
 
@@ -113,11 +114,17 @@
 
 (defn analysis-add-dialog [contents server]
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
-	from (let [model (SpinnerDateModel.)
+	from (let [model (doto (SpinnerDateModel.)
+			   (.setCalendarField Calendar/DAY_OF_MONTH))
 		   spinner (JSpinner. model)]
+;	       (.setCalendarField model Calendar/DAY_OF_MONTH)
+	       (.setEditor spinner (JSpinner$DateEditor. spinner "yyyy-MM-dd"))
 	       spinner)
+		
 	to (let [model (SpinnerDateModel.)
 		 spinner (JSpinner. model)]
+	     (.setCalendarField model Calendar/DAY_OF_MONTH)
+	     (.setEditor spinner (JSpinner$DateEditor. spinner "yyyy-MM-dd"))
 	     spinner)
 
 	combomodels-on-center (atom {})
@@ -188,6 +195,8 @@
 	chart (ChartFactory/createTimeSeriesChart 
 					      nil nil nil 
 					      time-series false false false)
+
+;setDateFormatOverride
 	tbl-model (create-table-model
 		   (fn [row-num] 
 		     (.removeSeries time-series row-num))
@@ -209,7 +218,11 @@
 		  (swap! current-row (fn [_] (.convertRowIndexToModel table row)))
 		  (.show popupMenu table x y)))]
 
-    
+(println (.getRange (.getDomainAxis (.getXYPlot chart))))
+(doto (.getPlot chart)
+    (.setBackgroundPaint Color/white)
+    (.setRangeGridlinePaint Color/gray)
+    (.setOutlineVisible false))
 
     (doto panel
       (.setLayout (BorderLayout.))
