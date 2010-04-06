@@ -1,11 +1,12 @@
 (ns se.sj.monitor.database
-  (:use [se.sj.monitor db mem])
+  (:use [se.sj.monitor db daynames mem])
   (:use clojure.test)
   (:use clojure.contrib.logging)
   (:use cupboard.utils))
 
 "A wrapper around live data and persistent store"
 (def *live-data* (ref {}))
+(defonce lock (Object.))
 
 (defmacro using-live
   "A binding around using another live data" 
@@ -21,7 +22,15 @@
 		      (java.io.File. ~path))]
      (when-not (. directory# isDirectory)
        (. directory# mkdirs))
-     (using-db ~path "rawdata" [:date :host :category :counter :instance :jvm] ~@form)))
+     (using-db ~path "rawdata" [:date :host :category :counter :instance :jvm] 
+	       (using-dayname-db @*db-env* "daynames" ~@form))))
+
+(defn ensure-name [name date]
+   (if-let [current (get-from-dayname date)]
+    (when (not (contains? current name))
+      (add-to-dayname date (conj current name)))
+    (add-to-dayname date (conj #{} name))
+))
 
 (defn add-data 
   "Adding data to the store, live if bound, and history if bound. Name is expected to be a map of keyword and string value, possibly used as indices of the data. Time-stamp is expected to be a Date object."
@@ -29,8 +38,11 @@
   {:pre [(instance? java.util.Date time-stamp)]}
   (when @*live-data* 
     (dosync (alter *live-data* add name time-stamp value)))
-  (when @*db* 
+  (when @*db*
+    (locking lock
+      (ensure-name name time-stamp))
     (add-to-db value time-stamp name)))            ;använd seque
+
 
 (defn clean-live-data-older-than 
   "Remove data in live-data that has timestamp older than timestamp. Removes empty rows"
@@ -60,39 +72,67 @@
 		  (= day-after-upper-as-text (. df format %))) 
 		(day-by-day lower))))
 
-(defn names-where 
+(comment (defn names-where 
   ([pred]
      (when @*live-data*
        (filter pred (keys @*live-data*))))
-  ([pred lower upper]
+  ([lower upper]
      {:pre [(instance? java.util.Date lower)
 	    (instance? java.util.Date upper)]}
      (println (str lower " - " upper))
      (let [start (System/currentTimeMillis)
 	   items (atom 0)
 	   df (java.text.SimpleDateFormat. date-format)
-	   within-dates (fn [d] 
-			  (swap! items (fn [i] (inc i)))
-			  (and (<= (.getTime lower) (.getTime (second d)))
-			       (>= (.getTime upper) (.getTime (second d)))))
 	   names-for-day #(all-in-every (fn [seq-of-data] 
 					  (reduce (fn [a-set a-result] 
 						    (conj a-set (first a-result))) 
 						  #{} 
-						  (filter within-dates seq-of-data))) 
+						   seq-of-data))
 					:date (. df format %))]
        
        (if (> (. lower getTime) (. upper getTime))
-	 nil
+	 (names-where upper lower)
 	 (let [res (seq (reduce (fn [result-set names-for-a-day]
-		   (let [filtered-data (filter pred names-for-a-day)]
-		     (if (empty? filtered-data)
-		       result-set
-		       (apply conj result-set filtered-data))))
-		 #{}
-		 (map (fn [day]
-			(names-for-day day))
-		      (day-seq lower upper))))]
+				  (if (empty? names-for-a-day)
+				    result-set
+				    (apply conj result-set names-for-a-day)))
+				#{}
+				(map (fn [day]
+				       (names-for-day day))
+				     (day-seq lower upper))))]
+	   (println (double (/ @items (/ (- (System/currentTimeMillis) start) 1000.0))))
+	   res)))))
+
+)
+
+(defn names-where 
+  ([pred]
+     (when @*live-data*
+       (filter pred (keys @*live-data*))))
+  ([lower upper]
+     {:pre [(instance? java.util.Date lower)
+	    (instance? java.util.Date upper)]}
+     (let [start (System/currentTimeMillis)
+	   items (atom 0)
+	   df (java.text.SimpleDateFormat. date-format)
+;	   names-for-day #(all-in-every (fn [seq-of-data] 
+;					  (reduce (fn [a-set a-result] 
+;						    (conj a-set (first a-result))) 
+;						  #{} 
+;						   seq-of-data))
+;					:date (. df format %))
+	   ]
+       
+       (if (> (. lower getTime) (. upper getTime))
+	 (names-where upper lower)
+	 (let [res (seq (reduce (fn [result-set names-for-a-day]
+				  (if (empty? names-for-a-day)
+				    result-set
+				    (apply conj result-set names-for-a-day)))
+				#{}
+				(map (fn [day]
+				       (get-from-dayname day))
+				     (day-seq lower upper))))]
 	   (println (double (/ @items (/ (- (System/currentTimeMillis) start) 1000.0))))
 	   res)))))
 
@@ -161,7 +201,7 @@
   {:pre [(= java.util.Date (class lower) (class upper))]}
   (when-not (nil? @*db*)
     (if (> (. lower getTime) (. upper getTime))
-      nil
+      (apply data-by upper lower name-spec)
       (do
 	(let [data (reduce (fn [b pair] 
 			     (if (contains? *indices* (first pair))  
@@ -221,7 +261,7 @@
      (using-live 
       (using-history tmp
 		     (add-data {:host "Arne"} (dparse "20100111 100000")  32)
-		     (let [result (names-where (fn [_] true) 
+		     (let [result (names-where 
 					       (dparse "20100111 000000") 
 					       (dparse "20110111 235959"))]
 		       (is (= {:host "Arne"} (first result)) "Finding the sole item")
@@ -229,32 +269,21 @@
 		     (let [result (names-where (fn [_] true))]
 		       (is (= {:host "Arne"} (first result)) "Finding the sole item in in-memory db")
 		       (is (nil? (next result)) "no more items in in-mem bd"))
-		     (let [result (names-where (fn [_] true) 
+		     (let [result (names-where
 					       (dparse "20100112 000000") 
 					       (dparse "20110101 000000"))]
 		       (is (nil? (first result))) "No items the following days")
-		     (let [result (names-where (fn [_] true) 
-					       (dparse "20100111 100001") 
-					       (dparse "20110101 000000"))]
-		       (is (nil? (first result)) "No more items after the second where the sole is"))
-		     (let [result (names-where (fn [_] true) 
-					       (dparse "20100111 095958") 
-					       (dparse "20100111 095959"))]
-		       (is (nil? (first result)) "No items the second before the sole item"))
-		     (let [result (names-where (fn [_] true) 
+
+		     (let [result (names-where 
 					       (dparse "20100111 095958") 
 					       (dparse "20100111 100000"))]
 		       (is (not (nil? (first result))) "Found the item within a 2 sec span"))
-		     (let [result (names-where (fn [_] true) 
+		     (let [result (names-where 
 					       (dparse "20100111 100000") 
 					       (dparse "20100111 100000"))]
-		       (is (not (nil? (first result))) "Found the item with exact timing"))
-		     (let [dmilliparse #(. (java.text.SimpleDateFormat. "yyyyMMdd HHmmss.SSS") parse %)
-			   result (names-where (fn [_] true) 
-					       (dmilliparse "20100111 100000.001") 
-					       (dmilliparse "20100111 100000.999"))]
-		       (is (nil? (first result)) "No item a few millis to late"))))
+		       (is (not (nil? (first result))) "Found the item with exact timing"))))
      (finally  (rmdir-recursive tmp)))))
+
 
 (deftest test-names-where-many
   (let [tmp (make-temp-dir)
@@ -266,7 +295,7 @@
 		     (add-data {:host "Arne"} (dparse "20100111 100000")  32)
 		     (add-data {:host "Bertil"} (dparse "20100111 110000")  33)
 		     (add-data {:host "Cesar"} (dparse "20100111 120000")  34) 
-		     (let [result (names-where (fn [_] true) 
+		     (let [result (names-where 
 					       (dparse "20100111 000000") 
 					       (dparse "20110111 235959"))]
 		       (is (= #{{:host "Bertil"}{:host "Cesar"}{:host "Arne"}}  
@@ -276,28 +305,11 @@
 		       (is (= #{{:host "Bertil"}{:host "Cesar"}{:host "Arne"}}  
 			      (set result)) 
 			   "The items in live" ))
-		     (let [result (names-where (fn [_] true) 
-					       (dparse "20100111 113000") 
-					       (dparse "20110111 235959"))]
-		       (is (= #{{:host "Cesar"}}  (set result)) "The last only" ))
+
 		     (add-data {:host "Arne"} (dparse "20100111 090000")  31)
-		     (let [result (names-where (fn [_] true) 
-					       (dparse "20100111 080000") 
-					       (dparse "20100111 103000"))]
-		       (is (= #{{:host "Arne"}}  (set result)) "Only one Arne, while 2 records" ))
 
 		     (add-data {:host "Arne" :category "Silja"} (dparse "20100111 093000")  31.5)
-		     (let [result (names-where (fn [_] true) 
-					       (dparse "20100111 080000") 
-					       (dparse "20100111 103000"))]
-		       (is (= #{{:host "Arne"} {:host "Arne" :category "Silja"}}  (set result)) 
-			   "Two Arne, one with Silja" ))
-		     (let [result (names-where (fn [el] 
-						 (= (:category el) "Silja")) 
-					       (dparse "20100111 080000") 
-					       (dparse "20100111 103000"))]
-		       (is (= #{{:host "Arne" :category "Silja"}}  (set result)) 
-			   "Only the Arne with Silja" ))
+
 		     (let [result (names-where (fn [el] 
 						 (= (:category el) "Silja")))]
 		       (is (= #{{:host "Arne" :category "Silja"}}  (set result)) 
@@ -313,8 +325,7 @@
        (is (= #{{:host "Arne"}}  
 	      (set result)) 
 	   "Single in live" ))
-     (let [result (names-where (fn [_] true) 
-			       (dparse "20100101 080000") 
+     (let [result (names-where (dparse "20100101 080000") 
 			       (dparse "20100131 080000"))]
        (is (nil? result)))
      (add-data {:host "Arne"} (dparse "20100111 110000")  33)
@@ -354,7 +365,7 @@
 		    (let [result (names-where (fn [_] true))]
 		      (is (= nil result) 
 			  "no live names" ))
-		    (let [result (names-where (fn [_] true) 
+		    (let [result (names-where 
 					      (dparse "20100101 080000") 
 					      (dparse "20100131 080000"))]
 		      (is (= #{{:host "Arne"}} (set result)) "one element"))
@@ -408,9 +419,7 @@
 	   (java.util.Date.) 
 	   :host "Arne" :host "Lennart" :sladd "Olle")))
   (is (nil? (data-by (fn [_] true))))
-  (is (nil? (names-where (fn [_] true) 
-	       (java.util.Date.) 
-	       (java.util.Date.))))
+
   (is (nil? (names-where (fn [_] true))))
   (is (nil? (clean-live-data-older-than (java.util.Date.))))))
   

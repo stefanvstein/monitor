@@ -17,43 +17,43 @@ public interface ServerInterface extends Remote{
 	Iterable<Map<String, String>> rawLiveNames() throws RemoteException;
 	Iterable<Map<String, String>> rawNames(Date from, Date to) throws RemoteException;
     void ping() throws RemoteException;
-	byte[] classData(String name) throws RemoteException;
+    //	byte[] classData(String name) throws RemoteException;
 
-	public static class ServerClassLoader extends ClassLoader {
+    //	public static class ServerClassLoader extends ClassLoader {
 
 		
-		private ServerInterface server;
-		private boolean enabled = false;
+    //		private ServerInterface server;
+    //		private boolean enabled = false;
 
-		public ServerClassLoader(ClassLoader parent) {
-			super(parent);
+    //		public ServerClassLoader(ClassLoader parent) {
+    //			super(parent);
 
 
-		}
+    //		}
 		
-		public void enable(ServerInterface server)
-		{
-			this.server = server;
-			enabled=true;
-		}
+    //		public void enable(ServerInterface server)
+    //		{
+    //			this.server = server;
+    //			enabled=true;
+    //		}
 
-		@Override
-		protected Class<?> findClass(String name) throws ClassNotFoundException {
-			try {
-				return super.findClass(name);
-			} catch (ClassNotFoundException e) {
-				if(!enabled)
-					throw e;
-				try {
-					byte[] b = server.classData(name);
-					return defineClass(name, b, 0, b.length);
-				} catch (RemoteException e2) {
-					throw new ClassNotFoundException("Could not find class "
-							+ name, e2.getCause());
-				}
-			}
-
-		}
-	}
+    //		@Override
+    //		protected Class<?> findClass(String name) throws ClassNotFoundException {
+    //			try {
+    //				return super.findClass(name);
+    //			} catch (ClassNotFoundException e) {
+    //				if(!enabled)
+    //					throw e;
+    //				try {
+    //					byte[] b = server.classData(name);
+    //					return defineClass(name, b, 0, b.length);
+    //				} catch (RemoteException e2) {
+    //					throw new ClassNotFoundException("Could not find class "
+    //							+ name, e2.getCause());
+    //				}
+    //			}
+    //
+    //		}
+    //	}
 
 }

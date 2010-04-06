@@ -62,49 +62,12 @@
 	     (finally (db-close db#))))
 	  (finally (db-env-close db-env#)))))
 
-(comment
-(defmacro using-db2
-  "Defines the database to use, that will be closed after body. Path is directory path to db store, dn-name is the name of the db, and indexed-keyword are keywords in data that will be indexed."
-  [path db-name indexed-keywords & body]
-  `(binding [*db-env* (db-env-open ~path :allow-create true  :transactional true :txn-no-sync true)]
-    (try 
-     (binding [*db* (db-open *db-env* ~db-name :allow-create true)]
-       (try 
-	(binding [*next-key* (incremental-key *db*)]
-	  (binding [*indices* (reduce 
-			       (fn [m# v#] 
-				 (assoc m# v# 
-					(db-sec-open *db-env* 
-						     *db* 
-						     (name v#) 
-						     :allow-create true 
-						     :sorted-duplicates true
-						     :key-creator-fn v#))) 
-			       {} ~indexed-keywords )]
-	    (try
-	     (do ~@body)
-	     (finally (dorun (map (fn [v#] (db-sec-close v#)) (vals *indices*)))))))
-	(finally (db-close *db*))))
-     (finally (db-env-close *db-env*)))))
-)
-
 (defn- create-structure-as-vector [d]
   (let [time-stamp (:time d)
 	value (:value d)
 	data (dissoc d :time :value :date)]
      [data time-stamp value]))
 
-
-;(defn for-all-in-main [f]
-;  "Calls f for each element in f"
-;  (with-db-cursor [ c *db*]
-;    (dorun (map #(let [d (second %)
-;		       time-stamp (:time d)
-;		       value (:value d)
-;		       data (dissoc d :time :value :date)]
-;		     (f [data time-stamp value])) 
-;		(take-while #(not (empty? %)) 
-;			    (repeatedly #(db-cursor-next c)))))))
 
 (defn all-in-main 
   "Calls fun with a lazy seq of all emlements in main of *db*. The cursor closes after fun. That is, seq passed to fun is no longer valid after fun" 
@@ -118,15 +81,6 @@
 		    (lazy-seq (cons data (internal-fn-argument cursor)))))))]
       (fun (fn-argument cursor)))))
 
-
-;(defn for-all-in [indexed-key begining-with f]
-;  (if-let [idx (indexed-key *indices*)]
-;    (with-db-cursor [t idx]
-;      (db-cursor-search t begining-with)
-;      (with-db-join-cursor [j [t]]
-;	(dorun (map #(create-structure-as-vector (second %)) 
-;		    (take-while #(not (empty? %)) (repeatedly #(db-join-cursor-next j)))))))
-;    (throw (IllegalArgumentException. (str indexed-key " is not a key in database.")))))
 
 (defn all-in-every 
   "Returns result of calling fun with a lazy seq of all emlements according to keys-and-data. That is, pairs indexed keywords and expected values. Keywords are distinct. The cursor closes after fun. That is, seq passed to fun is no longer valid after fun" 
@@ -161,34 +115,6 @@
 			      (lazy-seq (cons data (p jo)))))))]
 		(fun (p join)))))
 	  (finally (dorun (map #(db-cursor-close %) cursors))))))))
-
-;(defn for-all-in-every [f & keys-and-data]
-;  (let [indexes-and-data (apply hash-map keys-and-data)
-;	is-valid-indexes #(reduce (fn [b index] 
-;				    (if (contains? *indices* index) b false)) 
-;				  true 
-;				  (keys indexes-and-data))
-;	close-cursor #(db-cursor-close %)
-;	close-cursors #(dorun (map close-cursor %))
-;	open-cursor (fn [s index-and-data]
-;		      (let [cursor (db-cursor-open ((key index-and-data) *indices*))]
-;			(try (if (empty? (db-cursor-search cursor (val index-and-data) :exact true))
-;			       (do (close-cursor cursor) 
-;				   s)
-;			       (conj s cursor))
-;			     (catch Exception e 
-;			       (close-cursors (conj s cursor))
-;			       (throw e)))))]
-;	
-;    (when (is-valid-indexes)
-;       (let [cursors (reduce open-cursor [] indexes-and-data)]
-;	 (try
-;	  (when (and (= (count cursors) (count indexes-and-data)) (not (empty? cursors)))
-;	    (with-db-join-cursor [join cursors]
-;	      (dorun (map #(f (create-structure-as-vector (second %))) 
-;			  (take-while #(not (empty? %)) 
-;				      (repeatedly #(db-join-cursor-next join)))))))
-;	 (finally (dorun (map #(db-cursor-close %) cursors))))))))
 
 (defn add-to-db 
 "Adds an entry to db. There will be an index of day-stamps if index :date is currently in current set of inidices. keyword-keys in keys will be indices, if those inidices is currently in use."

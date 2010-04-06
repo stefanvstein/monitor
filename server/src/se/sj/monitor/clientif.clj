@@ -21,21 +21,21 @@
 	  [] names)]
 (apply array-map result)))
 
-(defn byte-code-for [name]
-  (try
-   (let [clazz (. (.getClassLoader clojure.lang.PersistentArrayMap) loadClass name)
-	 resource (str (re-gsub #"\." "/" (.getName clazz)) ".class")
-	 outputStream (ByteArrayOutputStream.)]
-     (with-open [input (.. clazz (getClassLoader) (getResourceAsStream resource))
-		 output outputStream]
-       (copy input output))
-     (.toByteArray outputStream))
-   (catch Exception e
-     (cond 
-      (instance? ClassNotFoundException (root-cause e)) 
-      (throw (RemoteException. "Remote class not found" e))
-      (instance? IOException (root-cause e)) 
-      (throw (RemoteException. "Bytecode for remote class could not be loaded" e))))))
+;(defn byte-code-for [name]
+;  (try
+;   (let [clazz (. (.getClassLoader clojure.lang.PersistentArrayMap) loadClass name)
+;	 resource (str (re-gsub #"\." "/" (.getName clazz)) ".class")
+;	 outputStream (ByteArrayOutputStream.)]
+;     (with-open [input (.. clazz (getClassLoader) (getResourceAsStream resource))
+;		 output outputStream]
+;       (copy input output))
+;     (.toByteArray outputStream))
+;   (catch Exception e
+;     (cond 
+;      (instance? ClassNotFoundException (root-cause e)) 
+;      (throw (RemoteException. "Remote class not found" e))
+;      (instance? IOException (root-cause e)) 
+;      (throw (RemoteException. "Bytecode for remote class could not be loaded" e))))))
 
 (defn raw-data [from to names]
   (when (odd? (count names))
@@ -92,7 +92,7 @@
 	res (java.util.ArrayList. (reduce (fn [result a-name]
 					 (conj result (HashMap. (keyworded-names-as-string a-name))))
 				       [] 
-				       (names-where (fn [_] true) from to)))]
+				       (names-where from to)))]
     (println (- (System/currentTimeMillis) start))
     res))
   
@@ -108,8 +108,8 @@
 				       (raw-live-names))
 			 (rawNames [from# to#]
 				   (raw-names from# to#))
-			 (classData [name#]
-				    (byte-code-for name#))
+;			 (classData [name#]
+;				    (byte-code-for name#))
 			 (ping [])
 			 )] 
      (try 
@@ -134,8 +134,8 @@
 		  (UnicastRemoteObject/unexportObject @remote# true)
 		  (catch NoSuchObjectException _# )))))))
 
-(deftest simple
-  (is (not (nil? (byte-code-for "clojure.lang.PersistentArrayMap")))))
+;(deftest simple
+;  (is (not (nil? (byte-code-for "clojure.lang.PersistentArrayMap")))))
 
 (deftest keyworded
   (is (= {:Olle "Nisse" :Arne "Gulsot"} (names-as-keyworded {"Olle" "Nisse" "Arne" "Gulsot"})))
