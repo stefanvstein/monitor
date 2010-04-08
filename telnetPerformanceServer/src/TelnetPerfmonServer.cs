@@ -588,7 +588,7 @@ namespace PerformanceTools.TelnetPerfmonServer
                 }
             }
             
-            String timeString = time.ToString("yyyyMMdd HHmmss");
+            String timeString = time.ToString("yyyyMMdd HHmmss zzz");
             writer.WriteLine("T " + timeString);
             currentCategory = categoryNumbers[name];
         }
