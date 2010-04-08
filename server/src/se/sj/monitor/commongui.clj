@@ -1,5 +1,6 @@
 (ns se.sj.monitor.commongui
 (:import (javax.swing.table AbstractTableModel))
+(:import (java.util Date))
 (:import (java.awt Color))
  (:import (java.awt.event ActionListener))
 )
@@ -42,27 +43,31 @@
 
 (defn get-data 
   ([from to names server]
-  (let [stringed-names (interleave 
-			(map #(name (first %)) (partition 2 names)) 
-			(map #(second %) (partition 2 names)))
-	data (.rawData (server) from to (java.util.ArrayList. stringed-names))]
-    (reduce (fn [result a-data] 
-	      (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
-	    {} data)))
+     (try
+      (let [stringed-names (interleave 
+			    (map #(name (first %)) (partition 2 names)) 
+			    (map #(second %) (partition 2 names)))
+	    data (.rawData (server) from to (java.util.ArrayList. stringed-names))]
+	(reduce (fn [result a-data] 
+		  (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
+		{} data))
+     (catch Exception e (println e)
+	    {})))
   ([names server]
-     (let [stringed-names-in-hashmaps (reduce 
-				       (fn [r i]
-					 (conj r (java.util.HashMap. 
-						  (reduce 
-						   (fn [a b]
-						     (assoc a (name (key b)) (val b))) 
-						   {} i)))
-					 ) [] names)
-	   data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps))]
-       (reduce (fn [result a-data] 
-		 (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (val a-data)))) 
-	       {} data))
-     ))
+     (try
+      (let [stringed-names-in-hashmaps (reduce 
+					(fn [r i]
+					  (conj r (java.util.HashMap. 
+						   (reduce 
+						    (fn [a b]
+						      (assoc a (name (key b)) (val b))) 
+						    {} i)))
+					  ) [] names)
+	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps))]
+	(reduce (fn [result a-data] 
+		  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (val a-data)))) 
+		{} data))
+     (catch Exception e (println e) {}))))
 
 (defn create-table-model [remove-graph-fn recolor-graph-fn] 
   "rows and columns is expected to be atom []. Column 0 is expected to be a color"
@@ -151,3 +156,20 @@
     (swap! place-holder (fn [_] action))
     action
 ))
+
+(defn with-nans [data]
+  (let [without-nans  #(reduce (fn [r i]
+				(if (.isNaN (val i))
+				  r
+				  (conj r i)))
+			      [] %)
+	last-milli (atom 1)
+	with-nans #(reduce (fn [r i]
+			     (let [currentMilli (.getTime (key i))]
+			       (if (< 30000 (- currentMilli @last-milli))
+				 (do
+				   (swap! last-milli (fn [_] currentMilli))
+				   (assoc r (Date. (- currentMilli 1)) (Double/NaN) (Date. currentMilli) (val i)))
+				 (do  (swap! last-milli (fn [_] currentMilli)) (assoc r (key i) (val i))))))
+			   (sorted-map) %)]
+    (with-nans (without-nans data))))

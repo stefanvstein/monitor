@@ -72,38 +72,6 @@
 		  (= day-after-upper-as-text (. df format %))) 
 		(day-by-day lower))))
 
-(comment (defn names-where 
-  ([pred]
-     (when @*live-data*
-       (filter pred (keys @*live-data*))))
-  ([lower upper]
-     {:pre [(instance? java.util.Date lower)
-	    (instance? java.util.Date upper)]}
-     (println (str lower " - " upper))
-     (let [start (System/currentTimeMillis)
-	   items (atom 0)
-	   df (java.text.SimpleDateFormat. date-format)
-	   names-for-day #(all-in-every (fn [seq-of-data] 
-					  (reduce (fn [a-set a-result] 
-						    (conj a-set (first a-result))) 
-						  #{} 
-						   seq-of-data))
-					:date (. df format %))]
-       
-       (if (> (. lower getTime) (. upper getTime))
-	 (names-where upper lower)
-	 (let [res (seq (reduce (fn [result-set names-for-a-day]
-				  (if (empty? names-for-a-day)
-				    result-set
-				    (apply conj result-set names-for-a-day)))
-				#{}
-				(map (fn [day]
-				       (names-for-day day))
-				     (day-seq lower upper))))]
-	   (println (double (/ @items (/ (- (System/currentTimeMillis) start) 1000.0))))
-	   res)))))
-
-)
 
 (defn names-where 
   ([pred]
@@ -114,15 +82,7 @@
 	    (instance? java.util.Date upper)]}
      (let [start (System/currentTimeMillis)
 	   items (atom 0)
-	   df (java.text.SimpleDateFormat. date-format)
-;	   names-for-day #(all-in-every (fn [seq-of-data] 
-;					  (reduce (fn [a-set a-result] 
-;						    (conj a-set (first a-result))) 
-;						  #{} 
-;						   seq-of-data))
-;					:date (. df format %))
-	   ]
-       
+	   df (java.text.SimpleDateFormat. date-format)]
        (if (> (. lower getTime) (. upper getTime))
 	 (names-where upper lower)
 	 (let [res (seq (reduce (fn [result-set names-for-a-day]
@@ -133,7 +93,6 @@
 				(map (fn [day]
 				       (get-from-dayname day))
 				     (day-seq lower upper))))]
-	   (println (double (/ @items (/ (- (System/currentTimeMillis) start) 1000.0))))
 	   res)))))
 
 
@@ -199,12 +158,14 @@
 (defn data-by 
   ([lower upper & name-spec]
   {:pre [(= java.util.Date (class lower) (class upper))]}
+
+  
   (when-not (nil? @*db*)
     (if (> (. lower getTime) (. upper getTime))
       (apply data-by upper lower name-spec)
       (do
 	(let [data (reduce (fn [b pair] 
-			     (if (contains? *indices* (first pair))  
+			     (if (contains? (set (keys @*indices*)) (first pair))  
 			       (conj b (first pair) (second pair))
 			       b))
 			   []
@@ -214,7 +175,8 @@
 		      (reduce #(if-let [row ((first %2) %1)]
 				 (assoc %1 (first %2) (conj row (second %2)))
 				 (assoc %1 (first %2) (list (second %2))))
-			      {} in-need))
+			      {} in-need))]
+	  (let [
 	      from-db (apply data-by-unfiltered lower upper data)
 	      keep? (fn [required-key values a-row-key] 
 		      (when-let [value-found (required-key a-row-key)]
@@ -230,7 +192,7 @@
 		      (if (not (keep? required-key required-values row-key))
 			(dissoc result row-key)
 			result)))
-		  from-db (fored from-db needs)))))))
+		  from-db (fored from-db needs))))))))
 
   ([pred]
      (when @*live-data*

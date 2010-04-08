@@ -12,7 +12,7 @@
   "Returns sorted-map associated with name in database, 
   with key value added"
   ([database name kvs]
-     (let [fun  (fn [d row] (reduce #(assoc %1 (key %2) (val %2)) row d))]
+     (let [fun  (fn [d row] (reduce #(assoc %1 (key %2)  (val %2)) row d))]
        (if-let [row (get database name)]
 	 (fun kvs row)
 	 (let [row (sorted-map)]
@@ -20,7 +20,7 @@
   ([database name key value]
      (if-let [row (get database name)]
        (assoc row key value)
-       (sorted-map key value))))
+       (sorted-map key  value))))
 
 (defn add
   "Returns database with key and value added to the sorted-map associated with name. Or, with all entries found in another-database added."

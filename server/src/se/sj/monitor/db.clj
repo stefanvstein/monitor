@@ -12,6 +12,7 @@
 (def *next-key* (ref nil))
 (def *indices* (ref nil))
 
+
 (defonce date-format "yyyyMMdd")
 
 (defn incremental-key 
@@ -48,7 +49,8 @@
 		 (ref-set *db-env* db-env#)
 		 (ref-set *db* db#)
 		 (ref-set *next-key* next-key#)
-		 (ref-set *indices* indices#))
+		 (ref-set *indices* indices#)
+		)
 		(try
 		 (do ~@body)
 		 (finally
@@ -69,17 +71,17 @@
      [data time-stamp value]))
 
 
-(defn all-in-main 
-  "Calls fun with a lazy seq of all emlements in main of *db*. The cursor closes after fun. That is, seq passed to fun is no longer valid after fun" 
-  [fun]
-  (with-db-cursor [ cursor @*db*]
-    (let [fn-argument (fn internal-fn-argument [c]
-	      (let [next-elem (db-cursor-next cursor)] 
-		(if (empty? next-elem) 
-		  nil
-		  (let [data (create-structure-as-vector (second next-elem))]
-		    (lazy-seq (cons data (internal-fn-argument cursor)))))))]
-      (fun (fn-argument cursor)))))
+;(defn all-in-main 
+;  "Calls fun with a lazy seq of all emlements in main of *db*. The cursor closes after fun. That is, seq passed to fun is no longer valid after fun" 
+;  [fun]
+;  (with-db-cursor [ cursor @*db*]
+;    (let [fn-argument (fn internal-fn-argument [c]
+;	      (let [next-elem (db-cursor-next cursor)] 
+;		(if (empty? next-elem) 
+;		  nil
+;		  (let [data (create-structure-as-vector (second next-elem))]
+;		    (lazy-seq (cons data (internal-fn-argument cursor)))))))]
+;      (fun (fn-argument cursor)))))
 
 
 (defn all-in-every 
@@ -87,7 +89,9 @@
   [fun & keys-and-data] 
   (let [indexes-and-data (apply hash-map keys-and-data)
 	is-valid-indexes #(reduce (fn [b index] 
-				    (if (contains? @*indices* index) b false)) 
+				    (if (contains? @*indices* index) 
+				      b 
+				      false)) 
 				  true 
 				  (keys indexes-and-data))
 	close-cursor #(db-cursor-close %)
@@ -181,7 +185,7 @@
 	       (add-to-db 2 (dparse "20070101 120001") {:olle "Olof" :nisse "Gustav"})
 	       (add-to-db 3 (dparse "20070101 120003") {:olle "Olof" :nisse "Gustav"})
 	       (add-to-db 4 (dparse "20070101 120005") {:olle "Olof" :nisse "Gustav"})
-	       (all-in-main #(is (= 9 (count %)) "all is 9"))
+;	       (all-in-main #(is (= 9 (count %)) "all is 9"))
 	       (all-in-every #(is (= 7 (count %)) "7 Olof") :olle "Olof")
 	       (all-in-every #(is (= 3 (count %)) "3 Olof Gustav") :olle "Olof" :nisse "Gustav")
 	       (all-in-every #(is (= 6 (count %)) "6 Nils") :nisse "Nils")
@@ -196,11 +200,11 @@
 							   %)
 			     :date "20070101" :olle "Arne")))
 	       (remove-from-db :date "20070102")
-	       (all-in-main #(is (= 9 (count %)) "all is 9"))
+;	       (all-in-main #(is (= 9 (count %)) "all is 9"))
  	       (remove-from-db :date "20060102")
-	       (all-in-main #(is (= 9 (count %)) "all is 9"))
+;	       (all-in-main #(is (= 9 (count %)) "all is 9"))
 	       (remove-from-db :date "20070101")
-	       (all-in-main #(is (= 0 (count %)) "all is 0"))
+;	       (all-in-main #(is (= 0 (count %)) "all is 0"))
 
 
 
@@ -211,8 +215,8 @@
 
 	       (remove-until-from-db :date "20070103")
 
-	         #(is (= 1 (all-in-main (count %)) "all is 1"))
-	       (is (= 37.5 (all-in-main #(nth  (first %) 2))))
+;	         #(is (= 1 (all-in-main (count %)) "all is 1"))
+;	       (is (= 37.5 (all-in-main #(nth  (first %) 2))))
 	      
 
 	       )

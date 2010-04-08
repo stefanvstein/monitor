@@ -27,7 +27,13 @@
 		   (println "Shutdown :)")
 		   (when-let [t @runtime-thread]
 		     (swap! runtime-thread (fn [t] nil))
-		     (.stop t))))
+		     (while (.isAlive t)
+			    (try
+			     (.interrupt t)
+			     (.join t)
+			     (catch InterruptedException _)))			     
+		     (println "runtime thread is terminated"))))
+
 (def current-server (atom nil))
 (try
  (UIManager/setLookAndFeel (UIManager/getSystemLookAndFeelClassName))
@@ -124,18 +130,16 @@
     (let [serv (.readObject ois)]
 	(swap! current-server (fn [_] serv)))
     (when (not @runtime-thread)
-      (swap! runtime-thread (fn [_] 
-			      (let [t (doto (Thread. #(while true
-							     (try
-							      (Thread/sleep 15000)
-							      (get-new-data  server)
-							      (catch Exception e
-								(print-cause-trace e)
-								(println))))
-						     "Runtime collector")
-				       (.setDaemon true))]
-				(.start t)
-				t))))))
+      (swap! runtime-thread (fn [_] (doto (Thread. #(while @runtime-thread
+							   (try
+							    (Thread/sleep 15000)
+							    (get-new-data  server)
+							    (catch Exception e
+							      (print-cause-trace e)
+							      (println))))
+						   "Runtime Thread")
+				      (.setDaemon true))))
+      (.start @runtime-thread))))
 
   ([frame]
      (connect-dialog frame)

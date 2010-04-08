@@ -93,7 +93,7 @@
 					 (conj result (HashMap. (keyworded-names-as-string a-name))))
 				       [] 
 				       (names-where from to)))]
-    (println (- (System/currentTimeMillis) start))
+    ;(println (- (System/currentTimeMillis) start))
     res))
   
 

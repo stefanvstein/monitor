@@ -9,11 +9,11 @@
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
-		     GridBagLayout GridBagConstraints Insets))
-  (:import (java.awt.event WindowAdapter ActionListener MouseAdapter))
+		     GridBagLayout GridBagConstraints Insets ))
+  (:import (java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter))
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
-  (:import (java.util Calendar))
+  (:import (java.util Calendar Date))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart))
   (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond)))
 
@@ -63,6 +63,12 @@
       (dorun (map (fn [combo] (.addActionListener combo combo-action)) @combos-on-center))
     )))
 
+(defn- time-serie-to-sortedmap [timeserie]
+  (reduce (fn [r i] 
+	  (assoc r (Date. (.getFirstMillisecond (.getPeriod i ))) (.getValue i))) 
+	  (sorted-map) (.getItems timeserie))
+)
+
 			
 (defn on-add-to-analysis [from to name-values graph colors chart add-to-table add-column server]
   (.start (Thread. #(let [result (get-data from
@@ -95,17 +101,18 @@
 						 (add-to-table (key data) color (str (key data)))
 						 (dorun (map (fn [i] (add-column i)) (keys (key data)))) 
 						 serie))]
-					 (let [tempSerie  (TimeSeries. "")]
-					   (.setNotify tempSerie false)
-					   (let [new-timeserie 
-						 (reduce (fn [toAdd entry]
-							   (.add toAdd (TimeSeriesDataItem. 
-									(Millisecond. (key entry)) 
-									(val entry)))
-							   toAdd)
-							 tempSerie (val data))]
-					     
-					     (.addAndOrUpdate time-serie new-timeserie)))))
+					 (let [data-from-serie (time-serie-to-sortedmap time-serie)
+					       data-with-new-data (merge data-from-serie (val data))
+					       data-with-nans (with-nans data-with-new-data)
+					       temp-serie (doto (TimeSeries. "") (.setNotify false))
+					       new-serie (reduce (fn [r i]
+								   (.add r  (TimeSeriesDataItem. 
+									(Millisecond. (key i)) 
+									(val i)))
+								   r)
+								 temp-serie data-with-nans)]
+					   (.clear time-serie)
+					   (.addAndOrUpdate time-serie new-serie))))
 				     result))
 			 (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
 			 (.setNotify chart true))))
@@ -218,7 +225,7 @@
 		  (swap! current-row (fn [_] (.convertRowIndexToModel table row)))
 		  (.show popupMenu table x y)))]
 
-(println (.getRange (.getDomainAxis (.getXYPlot chart))))
+;(println (.getRange (.getDomainAxis (.getXYPlot chart))))
 (doto (.getPlot chart)
     (.setBackgroundPaint Color/white)
     (.setRangeGridlinePaint Color/gray)
@@ -252,7 +259,24 @@
 											     (popup event)))))
 						       (.setAutoCreateRowSorter true)))))
 	      (.setTopComponent (doto (ChartPanel. 
-				       (doto chart)))))))
+				       (doto chart))
+				  (.addComponentListener (proxy [ComponentAdapter] []
+							   (componentResized [e] 
+									     (let [c (.getComponent e)
+										   size (.getSize c)]
+									     ;(println (str "sized " c))
+									     
+									     (SwingUtilities/invokeLater 
+									      (fn []
+										(.setMinimumDrawHeight c (.getHeight size))
+										(.setMinimumDrawWidth c (.getWidth size))
+										(.setMaximumDrawHeight c (.getHeight size))
+										(.setMaximumDrawWidth c  (.getWidth size))
+										(.fireChartChanged (.getChart c))
+										))
+									     )))))))))
+				 
+				  
     {:panel panel 
      :add-to-table (:add-row tbl-model)
      :add-column (:add-column tbl-model)

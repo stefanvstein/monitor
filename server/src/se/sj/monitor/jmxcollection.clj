@@ -18,7 +18,8 @@
   (let [hasGcInfo  (try
 		    (let [gcinfo-class (Class/forName "com.sun.management.GcInfo")
 			  from-method (. gcinfo-class getMethod "from" (into-array [javax.management.openmbean.CompositeData]))
-			  create #(.invoke from-method nil (to-array [(.getValue %)]))]
+			  create (fn [at]; (println "create called") 
+				   (.invoke from-method nil (to-array [(.getValue at)])))]
 		      create)
 		    (catch ClassNotFoundException _ nil))]
 							    
@@ -42,7 +43,7 @@
 									   :instance name
 									   :jvm (vmname)
 									   :host (remote-hostname)}
-									  (.getValue the-attribute)]))))
+									  (double (.getValue the-attribute))]))))
 
 				    "CollectionTime" (conj result (fn [attributes] 
 								     (when-let [the-attribute (some #(when (= "CollectionTime" (.getName %)) 
@@ -56,54 +57,55 @@
 									(/ (.getValue the-attribute) 1000.0)]))))
 
 				    "LastGcInfo"  (if hasGcInfo 
-						    (conj result (fn [attirbutes] 
+						    (conj result (fn [attributes] 
 								   (when-let [the-attribute (some #(when (= "LastGcInfo" (.getName %)) 
 												     %) attributes)]
 								     (when-let [name (some #(when (= "Name" (.getName %)) (.getValue %)) attributes)] 
-								     (let [gcinfo (hasGcInfo the-attribute)
-									   before-gc (.getMemoryUsageBeforeGc gcinfo)
-									   after-gc (.getMemoryUsageAfterGc gcinfo)
-									   result [{:category "GarbageCollector"
-										    :counter "Last Duration"
-										    :section name
-										    :jvm (vmname)
-										    :host (remote-hostname)}
-										   (/ (.getDuration gcinfo) 1000.0)]
-									   usage-before (reduce (fn [result area]
-										;		  (println (str "Before " (key area) " " name " " (.getUsed (val area))))
-												  (conj result {:category "GarbageCollector"
-														 :counter "Usage Before Last"
+								       (when-let [gcinfo (hasGcInfo the-attribute)]
+									 (let [before-gc (.getMemoryUsageBeforeGc gcinfo)
+									       after-gc (.getMemoryUsageAfterGc gcinfo)
+									       result [{:category "GarbageCollector"
+											:counter "Last Duration"
+											:section name
+											:jvm (vmname)
+											:host (remote-hostname)}
+										       (/ (.getDuration gcinfo) 1000.0)]
+									       usage-before (reduce (fn [result area]
+					;		  (println (str "Before " (key area) " " name " " (.getUsed (val area))))
+												      (conj result {:category "GarbageCollector"
+														    :counter "Usage Before Last"
+														    :instance (key area)
+														    :jvm (vmname)
+														    :host (remote-hostname)
+														    :section name}
+													    (double (.getUsed (val area))))) [] before-gc)
+									       committed-after (reduce (fn [result area]
+													 (conj result {:category "GarbageCollector"
+														       :counter "Committed After Last"
+														       :instance (key area)
+														       :jvm (vmname)
+														       :host (remote-hostname)
+														       :section name}
+													       (/ (.getCommitted (val area)) 1.0))) [] after-gc)
+									       max-after (reduce (fn [result area]
+												   (conj result {:category "GarbageCollector"
+														 :counter "Max After Last"
 														 :instance (key area)
 														 :jvm (vmname)
 														 :host (remote-hostname)
 														 :section name}
-													 (.getUsed (val area)))) [] before-gc)
-									   committed-after (reduce (fn [result area]
-												      (conj result {:category "GarbageCollector"
-														    :counter "Committed After Last"
-														    :instance (key area)
-														    :jvm (vmname)
-														    :host (remote-hostname)
-														    :section name}
-													    (.getCommitted (val area)))) [] after-gc)
-									   max-after (reduce (fn [result area]
-												      (conj result {:category "GarbageCollector"
-														    :counter "Max After Last"
-														    :instance (key area)
-														    :jvm (vmname)
-														    :host (remote-hostname)
-														    :section name}
-													    (.getMax (val area)))) [] after-gc)
-									   usage-after (reduce (fn [result area]
-												 (conj result {:category "GarbageCollector"
-														:counter "Usage After Last"
-														:instance (key area)
-														:jvm (vmname)
-														:host (remote-hostname)
-														:section name}
-													(.getUsed (val area)))) [] after-gc)]
-								       (concat result usage-before usage-after committed-after max-after)
-								       )))))
+													 (double (.getMax (val area))))) [] after-gc)
+									       
+									       usage-after (reduce (fn [result area]
+												     (conj result {:category "GarbageCollector"
+														   :counter "Usage After Last"
+														   :instance (key area)
+														   :jvm (vmname)
+														   :host (remote-hostname)
+														   :section name}
+													   (double (.getUsed (val area))))) [] after-gc)]
+									   (concat result usage-before usage-after committed-after max-after))
+									 )))))
 						    result)
 				    result)) [] attributes)]
 		(assoc result object-name fns))
@@ -140,7 +142,7 @@
 								 :instance name
 								 :jvm (vmname)
 								 :host (remote-hostname)}
-								(.getUsed (MemoryUsage/from (.getValue the-attribute)))])))) 
+								(double (.getUsed (MemoryUsage/from (.getValue the-attribute))))])))) 
 				    
 				    result))
 				[] attributes)]
@@ -171,13 +173,13 @@
 								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
 								:jvm (vmname)
 								:host (remote-hostname)}
-						       (.getBlockedCount thread-info))))
+						       (double (.getBlockedCount thread-info)))))
 		  (swap! result (fn [current] (assoc current {:category "Thread" 
 								:counter "Waited Count"
 								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
 								:jvm (vmname)
 								:host (remote-hostname)}
-						       (.getWaitedCount thread-info))))
+						       (double (.getWaitedCount thread-info)))))
 		  (when (and (:contention thread-bean) (.isThreadContentionMonitoringEnabled bean))
 		    (swap! result (fn [current] (assoc current {:category "Thread" 
 								:counter "Waited Time"
@@ -229,7 +231,7 @@
 	       :jvm (vmname) 
 	       :category "Runtime" 
 	       :counter "UpTime"}
-		  the-time (remote-uptime TimeUnit/SECONDS))))))
+		  the-time (double (remote-uptime TimeUnit/SECONDS)))))))
 
 (defn jmx-java6 
  ([port stop-fn]

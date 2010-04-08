@@ -7,6 +7,7 @@
 (:import java.text.SimpleDateFormat))
 
 (def dayname-db (atom nil))
+(def dayname-cache (atom nil))
 
 (defmacro using-dayname-db
      [db-env name & form]
@@ -23,6 +24,8 @@
     (if (instance? Date date)
       (add-to-dayname (.format (SimpleDateFormat. date-format) date) names)
       (do
+;	(println (str "Adding dayname " (class names) (count names)))
+	(swap! dayname-cache (fn [_] [date names]))
 	(db-put @dayname-db date names)))))
 
 (defn get-from-dayname [date]
@@ -30,7 +33,12 @@
     (if (instance? Date date)
       (get-from-dayname (.format (SimpleDateFormat. date-format) date))
       (do
-	(second (db-get db date))))))
+	(if (= date (first @dayname-cache))
+	  (second @dayname-cache)
+	  (second (db-get db date)))))))
+	  
+	   
+	  
 
 (deftest dayname-test
   (let [tmp (make-temp-dir)

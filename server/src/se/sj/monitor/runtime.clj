@@ -60,8 +60,8 @@
 
 	axis-bottom (AxisLinear.)]
     (.addWindowListener frame (proxy [WindowAdapter] []
-			       (windowClosed [e] (println "Window Closed")
-					     (println (count @runtimes))
+			       (windowClosed [e] ;(println "Window Closed")
+					     ;(println (count @runtimes))
 					     (swap! runtimes (fn [current]
 							       (let [window (.getWindow e)]
 								 (reduce (fn [r i]
@@ -69,7 +69,8 @@
 									     (disj r i)
 									     r)
 									   ) current current))))
-					     (println (count @runtimes)))))
+					     ;(println (count @runtimes))
+					     )))
     (doto chart
       (.setMinimumSize (Dimension. 100 100))
       (.setPreferredSize (Dimension. 300 200))
@@ -169,17 +170,21 @@
 	add-columns #(dorun (map (fn [c] ((:add-column contents) c)) %))
 	new-trace-row #(let [color ((:colors contents))
 			     trace  (doto (Trace2DLtdReplacing. 1000)
-				      
-				      (.setTracePainter (proxy [TracePainterLine] [] 
-							  ( paintPoint [absoluteX, absoluteY, nextX, nextY, g,  original]
-								       (if-let [prev (proxy-super getPreviousPoint)]
-									 (if (or (.isNaN (.getY original)) (.isNaN (.getY prev)))
-									   (let [c (.getColor g)]
-									     (.setColor g (Color. 255,0,0,0))
-									     (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original)
-									     (.setColor g c))
-									   (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original))
-									 (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original)))))) 
+				    
+;				      (.setTracePainter (proxy [TracePainterLine] [] 
+;							  ( paintPoint [absoluteX, absoluteY, nextX, nextY, g,  original]
+;								       (try
+;									(if-let [prev (proxy-super getPreviousPoint)]
+;									  (if (or (.isNaN (.getY original)) (.isNaN (.getY prev)))
+;									    (let [c (.getColor g)]
+;									      (.setColor g (Color. 255,0,0,0))
+;									      (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original)
+;									      (.setColor g c))
+;									    (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original))
+;									  (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original))
+;									(catch Exception e (println e))))))
+				    
+				      ) 
 			     row (do ((:add-to-table contents) %1 color %2)
 				     (- (.getRowCount table-model) 1))]
 			 (.setColor trace color)
@@ -197,7 +202,9 @@
 							       (assoc current unique-name trace-row)))
 				       trace-row)))
 		       trace (first trace-row)
+		       ;data (with-nans (get-data-for a-name))]
 		       data (get-data-for a-name)]
+		   ;(println data)
 		   (if (empty? data)
 		     (do
 		       (when-let [row  (second (get @name-trace-rows a-name))]
@@ -291,7 +298,6 @@
 
 (defn update-runtime-data []
   (swap! runtime-names-of-interest (fn [_] #{}))
-  ;update listeners
   (dorun (map #(update-table-and-graphs %) @runtimes))
   (swap! all-runtime-names (fn [current]
 			     (reduce (fn [r i]
@@ -302,6 +308,10 @@
 
 (defn get-new-data [server]
   (let [data (get-data @all-runtime-names server)]
-    (swap! all-runtime-names (fn [current] (apply conj current (keys data))))
-    (swap! all-runtime-data (fn [all] (merge all data)))
-    (SwingUtilities/invokeAndWait update-runtime-data)))
+    (if (not (empty? data))
+      (do
+	(swap! all-runtime-names (fn [current] (apply conj current (keys data))))
+	(swap! all-runtime-data (fn [all] (merge all data)))
+	(SwingUtilities/invokeAndWait update-runtime-data))
+      ;(println "There is no data")
+      )))
