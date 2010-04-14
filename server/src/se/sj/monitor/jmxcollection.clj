@@ -234,10 +234,10 @@
 		  the-time (double (remote-uptime TimeUnit/SECONDS)))))))
 
 (defn jmx-java6 
- ([port stop-fn]
-     (using-jmx-port port (jmx-java6-impl stop-fn)))
- ([host port stop-fn]
-   (using-jmx host port (jmx-java6-impl stop-fn)))
+ ([name port stop-fn]
+     (using-named-jmx-port port name (jmx-java6-impl stop-fn)))
+ ([name host port stop-fn]
+   (using-named-jmx host port name (jmx-java6-impl stop-fn)))
  ([stop-fn] 
     (jmx-java6-impl stop-fn)))
  

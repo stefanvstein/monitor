@@ -56,7 +56,11 @@
 			(let [ addr (. InetAddress getByName host)]
 			  (if (. addr isLoopbackAddress)
 			    (. (. InetAddress getLocalHost) getCanonicalHostName)
-			    (. addr getCanonicalHostName)))
+			    (let [n (. addr getCanonicalHostName)]
+			      (if (re-matches #"([0-9]+\.){3}[0-9]+" n)
+				(do (println "Here you are")(. addr getHostName))
+				n)
+			      )))
 			(catch UnknownHostException _ host)))))
   ([port-or-host vmname-or-port]
      (if (integer? port-or-host)

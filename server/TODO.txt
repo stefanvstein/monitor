@@ -14,7 +14,7 @@ Lägg till samples i ladda analys. Dvs hur många samples per dag vi vill ha.
 
 Lägg till NaN i visning OK, funkar inte i Runtime. Skalar fel
 
-Lägg till tidszon i perfmon
+Lägg till tidszon i perfmon OK
 
 Skala värden
 

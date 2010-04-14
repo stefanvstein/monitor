@@ -96,10 +96,8 @@
     ;(println (- (System/currentTimeMillis) start))
     res))
   
-
-(defmacro serve-clients [port transfer-port stop-fn & form]
-  `(let [remote# (atom nil)
-	 exported#  (proxy [ServerInterface] []
+(def remote (atom nil))
+(def exported (proxy [ServerInterface] []
 			 (rawData [from# to# names#] 
 				  (raw-data from# to# names#))
 			 (rawLiveData [ i#] 
@@ -111,11 +109,16 @@
 ;			 (classData [name#]
 ;				    (byte-code-for name#))
 			 (ping [])
-			 )] 
-     (try 
+			 ))
+
+(defmacro serve-clients [port transfer-port stop-fn & form]
+  `(try
+      
       (let [obj# (UnicastRemoteObject/exportObject 
-		       exported# ~port)]
-	(swap! remote# (fn [_#] obj#)))
+		       exported ~port)]
+	(swap! remote (fn [_#] obj#))
+	(if (nil? @remote)
+	  (throw (IllegalArgumentException. "Got a null as exported" ))))
       
       (let [server-socket# (ServerSocket. ~transfer-port)]
 	(. server-socket# setSoTimeout 1000)
@@ -125,14 +128,17 @@
 				  (try
 				   (with-open [sock# (.accept ss#)
 					       output# (ObjectOutputStream. (.getOutputStream sock#))]
-				     (. output# writeObject @remote#))
+				     (. output# writeObject @remote))
 				   (catch SocketTimeoutException _#)))))))
 	(do ~@form))
-	 
-      (finally (when @remote#
+      (catch Exception e#
+	   (println e#) )
+      (finally (when @remote
 		 (try 
-		  (UnicastRemoteObject/unexportObject @remote# true)
-		  (catch NoSuchObjectException _# )))))))
+		  (println "Removeing interface!!!!!!!!!!!!!!!!!")
+		  (UnicastRemoteObject/unexportObject @remote true)
+		  (catch NoSuchObjectException _# ))
+		 (swap! remote (fn [_#] nil))))))
 
 ;(deftest simple
 ;  (is (not (nil? (byte-code-for "clojure.lang.PersistentArrayMap")))))

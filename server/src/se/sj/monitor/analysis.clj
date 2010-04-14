@@ -14,7 +14,9 @@
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
   (:import (java.util Calendar Date))
-  (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart))
+  (:import (java.text SimpleDateFormat))
+  (:import (org.jfree.chart.axis NumberAxis))
+  (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities))
   (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond)))
 
 
@@ -144,13 +146,13 @@
 						result)))
 					  []  @combomodels-on-center)]
 		(on-add-to-analysis (.getDate (.getModel from))
-			(.getDate (.getModel to))
-			name-values
-			(:time-series contents)
-			(:colors contents)
-			(:chart contents)
-			(:add-to-table contents)
-			(:add-column contents)
+				    (.getDate (.getModel to))
+				    name-values
+				    (:time-series contents)
+				    (:colors contents)
+				    (:chart contents)
+				    (:add-to-table contents)
+				    (:add-column contents)
 			server)))
 	
 	add (let [add (JButton. "Add")]
@@ -197,13 +199,15 @@
 
 (defn new-analysis-panel [] 
   (let [panel (JPanel.)
-;	color-cycle (atom (cycle colors)) 
 	time-series (TimeSeriesCollection.)
+;	right-series (TimeSeriesCollection.)
 	chart (ChartFactory/createTimeSeriesChart 
 					      nil nil nil 
 					      time-series false false false)
+		
+	
 
-;setDateFormatOverride
+
 	tbl-model (create-table-model
 		   (fn [row-num] 
 		     (.removeSeries time-series row-num))
@@ -225,12 +229,20 @@
 		  (swap! current-row (fn [_] (.convertRowIndexToModel table row)))
 		  (.show popupMenu table x y)))]
 
-;(println (.getRange (.getDomainAxis (.getXYPlot chart))))
-(doto (.getPlot chart)
-    (.setBackgroundPaint Color/white)
-    (.setRangeGridlinePaint Color/gray)
-    (.setOutlineVisible false))
 
+    (.setDateFormatOverride (.getDomainAxis (.getPlot chart)) (SimpleDateFormat. "yy-MM-dd HH:mm:ss"))
+   ;(let [right-axis (NumberAxis.)
+;	  plot (.getPlot chart)]
+ ;     (.setRangeAxis plot 1 right-axis)
+  ;    (.setDataset plot 1 right-series)
+   ;   )
+
+
+    (doto (.getPlot chart)
+      (.setBackgroundPaint Color/white)
+      (.setRangeGridlinePaint Color/gray)
+      (.setOutlineVisible false))
+    
     (doto panel
       (.setLayout (BorderLayout.))
       (.add (doto (JSplitPane.)
@@ -243,6 +255,7 @@
 							(proxy [TableCellRenderer] []
 							  (getTableCellRendererComponent 
 							   [table color selected focus row column]
+							  ; (doto (JLabel. "<")
 							   (doto (JLabel.)
 							     (.setOpaque true)
 							     (.setBackground color)
@@ -276,11 +289,13 @@
 										))
 									     )))))))))
 				 
-				  
+ ;(ChartUtilities/applyCurrentTheme chart)				  
     {:panel panel 
      :add-to-table (:add-row tbl-model)
      :add-column (:add-column tbl-model)
      :chart chart
      :colors (color-cycle)
-     :time-series time-series}))
+     :time-series time-series
+     ;:right-series right-series
+     }))
 
