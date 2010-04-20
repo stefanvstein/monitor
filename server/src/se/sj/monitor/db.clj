@@ -1,17 +1,21 @@
 (ns se.sj.monitor.db
   (:use cupboard.bdb.je)
   (:use cupboard.utils)
-  (:use clojure.test)
-  (:use [clojure.contrib profile])
+  (:use [clojure stacktrace test])
+  (:use [clojure.contrib profile ])
   (:import java.text.SimpleDateFormat)
   (:import java.util.Date)
-  (:import [com.sleepycat.je OperationStatus DatabaseException]))
+  (:import [com.sleepycat.je OperationStatus DatabaseException LockConflictException]))
 
 (def *db* (ref nil))
 (def *db-env* (ref nil)) 
 (def *next-key* (ref nil))
 (def *indices* (ref nil))
 
+(defn- causes [#^java.lang.Throwable e] 
+  (take-while #(not (nil? %)) 
+	      (iterate #(when % (. % getCause)) 
+		       e)))
 
 (defonce date-format "yyyyMMdd")
 
@@ -33,7 +37,6 @@
      (try
 	(when-let [db# (db-open db-env# ~db-name :allow-create true)]
 	  (try
-
 	   (let [next-key# (incremental-key db#)]
 	     (when-let [indices# (reduce (fn [m# v#] 
 					   (assoc m# v# 
@@ -59,10 +62,10 @@
 		   (ref-set *db* nil)
 		   (ref-set *next-key* nil)
 		   (ref-set *indices* nil))))
-		 
+
 		(finally (dorun (map (fn [v#] (db-sec-close v#)) (vals indices#)))))))
-	     (finally (db-close db#))))
-	  (finally (db-env-close db-env#)))))
+	     (finally  (db-close db#))))
+	  (finally  (db-env-close db-env#)))))
 
 (defn- create-structure-as-vector [d]
   (let [time-stamp (:time d)
@@ -97,7 +100,7 @@
 	close-cursor #(db-cursor-close %)
 	close-cursors #(dorun (map close-cursor %))
 	open-cursor (fn [s index-and-data]
-		      (let [cursor (db-cursor-open ((key index-and-data) @*indices*))]
+		      (let [cursor (db-cursor-open ((key index-and-data) @*indices*) :isolation :read-uncommited)]
 			(try (if (empty? (db-cursor-search cursor (val index-and-data) :exact true))
 			       (do (close-cursor cursor) 
 				   s)
@@ -105,20 +108,33 @@
 			     (catch Exception e 
 			       (close-cursors (conj s cursor))
 			       (throw e)))))]
-	
     (when (is-valid-indexes)
-       (let [cursors (reduce open-cursor [] indexes-and-data)]
-	 (try
-	  (when (and (= (count cursors) (count indexes-and-data)) (not (empty? cursors)))
-	    (with-db-join-cursor [join cursors]
-	      (let [p (fn p [jo]
-			(let [ne (db-join-cursor-next jo)]
-			  (if (empty? ne)
-			    nil
-			    (let [data (create-structure-as-vector (second ne))]
-			      (lazy-seq (cons data (p jo)))))))]
-		(fun (p join)))))
-	  (finally (dorun (map #(db-cursor-close %) cursors))))))))
+      (let [failed (atom true)
+	    retries (atom 0)
+	    r (atom nil)]
+     (while (and @failed (> 500 @retries))
+	     (try
+	      (let [cursors (reduce open-cursor [] indexes-and-data)]
+		(try
+		 (when (and (= (count cursors) (count indexes-and-data)) (not (empty? cursors)))
+		   (with-db-join-cursor [join cursors]
+		     (let [p (fn p [jo]
+			       (let [ne (db-join-cursor-next jo)]
+				 (if (empty? ne)
+				   nil
+				   (let [data (create-structure-as-vector (second ne))]
+				     (lazy-seq (cons data (p jo)))))))]
+		       (reset! r (fun (p join))))))
+		 (finally (dorun (map #(db-cursor-close %) cursors))))
+		(reset! failed false))
+	      (catch Exception e
+
+		(if (some #(instance? LockConflictException %) (causes e))
+		  (do (swap! retries (fn [c] (inc c))) 
+		      (println (str (java.util.Date.) " deadlock in read"))
+		      (try (Thread/sleep 500) (catch Exception e)))
+		  (throw e)))))
+	     @r))))
 
 (defn add-to-db 
 "Adds an entry to db. There will be an index of day-stamps if index :date is currently in current set of inidices. keyword-keys in keys will be indices, if those inidices is currently in use."
@@ -139,8 +155,21 @@
     (let [data (assoc keys 
 		 :time time 
 		 :date (. (SimpleDateFormat. date-format) format time) 
-		 :value value)]
-      (db-put db (next-key) data)))
+		 :value value)
+	  failed (atom true)
+	  retries (atom 0)]
+      
+      (while (and @failed (> 500 @retries))  
+	     (try
+	      (db-put db (next-key) data)
+	      (reset! failed false)
+	      (catch Exception e 
+		(if (some #(instance? LockConflictException %)(causes e))
+		  (do (swap! retries (fn [c] (inc c)))
+		      (println (str (java.util.Date.) " deadlock in add"))
+		      (try (Thread/sleep 500)
+			   (catch Exception e)))
+		  (throw e)))))))
 
  ([data time keys]
     (add-to-db @*db* @*next-key* data time keys)))
@@ -152,20 +181,45 @@
   (when-let [index (indexKey @*indices*)]
     (db-sec-delete index value)))
 
-(defn remove-until-from-db 
-"Removes all entries that index indexKey, in current set of indices, is currently less than value"
-[indexKey value]
-  (when-let [index (indexKey @*indices*)]
-    (with-db-txn [txn @*db-env*]
-      (with-db-cursor [cursor index :txn txn]
-	(while (let [record  (do (db-cursor-first cursor))]
-		 (if (empty? record)
-		   nil
-		   (if (< 0 (.compareTo value (indexKey (second record))))
-		     (do
-		       (db-cursor-delete cursor)
-		       true)
-		     nil))))))))
+
+(defn remove-spec-from-db [date];as long
+   (with-db-txn [t @*db-env*]
+     (try
+      (with-db-cursor [c @*db* :txn t]
+       (let [result (atom false)]
+	 (dotimes [q 10]
+	   (let [n (db-cursor-next c)]
+	     (if (empty? n)
+	       (reset! result false)
+	       (let [data (second n)]
+		 (if (< (Long/parseLong (:date data)) date)
+		   (do (db-cursor-delete c)
+		       (reset! result true))
+		   (reset! result false))))))
+	@result)))
+   (catch Exception e 
+     (if (some #(instance? LockConflictException %) (causes e))
+       (do
+	 (db-txn-abort t)
+	 (println (str (java.util.Date.) " deadlock in remove"))
+	 (try (Thread/sleep 500) (catch Exception e))
+	 true)
+       (throw e)))))
+
+;(defn remove-until-from-db 
+;"Removes all entries that index indexKey, in current set of indices, is currently less than value"
+;[indexKey value]
+;  (when-let [index (indexKey @*indices*)]
+;    (with-db-txn [txn @*db-env*]
+;      (with-db-cursor [cursor index :txn txn]
+;	(while (let [record  (do (db-cursor-first cursor))]
+;		 (if (empty? record)
+;		   nil
+;		   (if (< 0 (.compareTo value (indexKey (second record))))
+;		     (do
+;		       (db-cursor-delete cursor)
+;		       true)
+;		     nil))))))))
 
 (deftest test-db
   (let [tmp (make-temp-dir)
@@ -185,6 +239,7 @@
 	       (add-to-db 2 (dparse "20070101 120001") {:olle "Olof" :nisse "Gustav"})
 	       (add-to-db 3 (dparse "20070101 120003") {:olle "Olof" :nisse "Gustav"})
 	       (add-to-db 4 (dparse "20070101 120005") {:olle "Olof" :nisse "Gustav"})
+	       
 ;	       (all-in-main #(is (= 9 (count %)) "all is 9"))
 	       (all-in-every #(is (= 7 (count %)) "7 Olof") :olle "Olof")
 	       (all-in-every #(is (= 3 (count %)) "3 Olof Gustav") :olle "Olof" :nisse "Gustav")
@@ -193,8 +248,10 @@
 	       (all-in-every #(is (= 7 (count %)) "7 Nils") :nisse "Nils")
 	       (all-in-every #(is (= 9 (count %)) "9 20070101") :date "20070101")
 	       (all-in-every #(is (=  36.7 (nth  (first %) 2))) :date "20070102")
+	       (all-in-every #(is (= 2 (count %)) ) :olle "Arne" :date "20070101")
 	       (println (str "-----" (all-in-every #(nth (first %) 2) :date "20070102")))
 	       (is (= #{35.5 36.5} (all-in-every #(reduce (fn [s v] 
+							    (println (str "v:" v))
 							     (conj s (nth v 2))) 
 							   #{} 
 							   %)
@@ -213,7 +270,7 @@
 	       (add-to-db 35.5 (dparse "20070101 120000") {:olle "Arne" :nisse "Nils"})
 	       
 
-	       (remove-until-from-db :date "20070103")
+;	       (remove-until-from-db :date "20070103")
 
 ;	         #(is (= 1 (all-in-main (count %)) "all is 1"))
 ;	       (is (= 37.5 (all-in-main #(nth  (first %) 2))))

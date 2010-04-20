@@ -209,7 +209,7 @@
 	  {} mem-fns))
 
 (defn- jmx-java6-impl
-  [stop-fn]
+  ([stop-fn threads?]
   (let [collector-fns (collector-keys (mbean-server))
 	mem-fns (memory-fns (mbean-server))
 	thread-beans (thread-bean (mbean-server))]
@@ -222,24 +222,25 @@
 	     (dorun (map (fn [i]  
 			   (add-data (key i) the-time (val i))) 
 			 (memory-values mem-fns (mbean-server))))
-	     (dorun (map (fn [i]  
-			   (add-data (key i) the-time (val i))) 
-			 (thread-info thread-beans)))
+	     
+	       (dorun (map (fn [i]  
+			     (add-data (key i) the-time (val i) threads?)) 
+			   (thread-info thread-beans)))
 
 	     (add-data 
 	      {:host (remote-hostname) 
 	       :jvm (vmname) 
 	       :category "Runtime" 
 	       :counter "UpTime"}
-		  the-time (double (remote-uptime TimeUnit/SECONDS)))))))
+		  the-time (double (remote-uptime TimeUnit/SECONDS))))))))
 
 (defn jmx-java6 
  ([name port stop-fn]
-     (using-named-jmx-port port name (jmx-java6-impl stop-fn)))
+     (using-named-jmx-port port name (jmx-java6-impl stop-fn false)))
  ([name host port stop-fn]
-   (using-named-jmx host port name (jmx-java6-impl stop-fn)))
+   (using-named-jmx host port name (jmx-java6-impl stop-fn false)))
  ([stop-fn] 
-    (jmx-java6-impl stop-fn)))
+    (jmx-java6-impl stop-fn false)))
  
 (deftest test-java6
  (using-live

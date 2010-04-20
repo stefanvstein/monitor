@@ -26,23 +26,58 @@
 	       (using-dayname-db @*db-env* "daynames" ~@form))))
 
 (defn ensure-name [name date]
-   (if-let [current (get-from-dayname date)]
-    (when (not (contains? current name))
+  (if-let [current (get-from-dayname date)]
+    (if (not (contains? current name))
       (add-to-dayname date (conj current name)))
-    (add-to-dayname date (conj #{} name))
-))
+    (add-to-dayname date (conj #{} name))))
 
 (defn add-data 
   "Adding data to the store, live if bound, and history if bound. Name is expected to be a map of keyword and string value, possibly used as indices of the data. Time-stamp is expected to be a Date object."
-  [name time-stamp value]
+  ([name time-stamp value save?]
   {:pre [(instance? java.util.Date time-stamp)]}
   (when @*live-data* 
     (dosync (alter *live-data* add name time-stamp value)))
-  (when @*db*
-    (locking lock
-      (ensure-name name time-stamp))
-    (add-to-db value time-stamp name)))            ;använd seque
+  (when save?
+    (when @*db*
+      (locking lock
+	(ensure-name name time-stamp))
+      (add-to-db value time-stamp name))))
+  ([name time-stamp value]
+     (add-data name time-stamp value true)))
 
+;(defn clean-stored-data-older-than
+;  [timestamp]
+;  {:pre [(instance? java.util.Date timestamp)]}
+;  (when @*db*
+;    (let [timestamp-string (.format (java.text.SimpleDateFormat. date-format) timestamp)]
+;      (remove-until-from-db :date timestamp-string))))
+
+;(defn clean-stored-data-older-than
+;  [timestamp]
+;  {:pre [(instance? java.util.Date timestamp)]}
+;  (let [until (.format (java.text.SimpleDateFormat. date-format) timestamp)
+;	until-as-long (Long/parseLong until) 
+;	alldates (all-dates)
+;	dates-to-remove (filter (fn [adate] (> until-as-long (Long/parseLong adate))) alldates) ]
+;    (dorun (map (fn [a-date] 
+;		  (println (str (java.util.Date.) " About to remove " a-date))  
+;		  (remove-from-db :date a-date)
+;		  (println (str (java.util.Date.) " " a-date " removed")) 
+;		  (remove-date a-date)
+;		  (println (str (java.util.Date.) " " a-date " removed from dayname")) ) dates-to-remove))))
+
+(defn clean-stored-data-older-than
+  [timestamp]
+  {:pre [(instance? java.util.Date timestamp)]}
+  (let [until (.format (java.text.SimpleDateFormat. date-format) timestamp)
+	until-as-long (Long/parseLong until)  
+	alldates (all-dates)
+	dates-to-remove (filter (fn [adate] (> until-as-long (Long/parseLong adate))) alldates) ]
+
+    (while (remove-spec-from-db until-as-long))
+    (dorun (map (fn [a-date] 
+		  (remove-date a-date)) dates-to-remove))
+ ))
 
 (defn clean-live-data-older-than 
   "Remove data in live-data that has timestamp older than timestamp. Removes empty rows"
@@ -216,6 +251,7 @@
      (throw (UnsupportedOperationException. "Currently not implemented"))))
 
 (deftest test-names-where-one
+
   (let [tmp (make-temp-dir)
 	df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)]
@@ -243,11 +279,40 @@
 		     (let [result (names-where 
 					       (dparse "20100111 100000") 
 					       (dparse "20100111 100000"))]
-		       (is (not (nil? (first result))) "Found the item with exact timing"))))
+		       (is (not (nil? (first result))) "Found the item with exact timing"))
+		     (clean-stored-data-older-than (dparse "20100112 090000"))
+		     (let [result (names-where 
+				   (dparse "20100111 000000") 
+				   (dparse "20110111 235959"))]
+		       (is (nil? (first result))))))
+
+      
      (finally  (rmdir-recursive tmp)))))
 
 
+(deftest test-remove
+(println "Hammarby")
+  (let [tmp (make-temp-dir)
+	df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
+	dparse #(. df parse %)]
+    (try
+     (using-live 
+      (using-history tmp
+		     (let [baseDate (.getTime (dparse "20100111 100000"))]
+		       (println (str "Start " (java.util.Date.)))
+		       (loop [i 0]
+			 (add-data {:host "Arne"} (java.util.Date. (+ i baseDate))  (+ i 32))
+			 (if (> 5000 i)
+			   (recur (inc i))
+			   (println (str "Added " i))))
+		       (println (str "Cleaning " (java.util.Date.)))
+		       (clean-stored-data-older-than (dparse "20100112 100000")))
+		       (println (str "Done " (java.util.Date.)))
+)) (finally  (rmdir-recursive tmp)))))
+
+
 (deftest test-names-where-many
+  (println "Running commented")
   (let [tmp (make-temp-dir)
 	df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)]
@@ -258,8 +323,8 @@
 		     (add-data {:host "Bertil"} (dparse "20100111 110000")  33)
 		     (add-data {:host "Cesar"} (dparse "20100111 120000")  34) 
 		     (let [result (names-where 
-					       (dparse "20100111 000000") 
-					       (dparse "20110111 235959"))]
+				   (dparse "20100111 000000") 
+				   (dparse "20110111 235959"))]
 		       (is (= #{{:host "Bertil"}{:host "Cesar"}{:host "Arne"}}  
 			      (set result)) 
 			   "The items" ))
@@ -267,16 +332,17 @@
 		       (is (= #{{:host "Bertil"}{:host "Cesar"}{:host "Arne"}}  
 			      (set result)) 
 			   "The items in live" ))
-
+		     
 		     (add-data {:host "Arne"} (dparse "20100111 090000")  31)
-
+		     
 		     (add-data {:host "Arne" :category "Silja"} (dparse "20100111 093000")  31.5)
-
+		     
 		     (let [result (names-where (fn [el] 
 						 (= (:category el) "Silja")))]
 		       (is (= #{{:host "Arne" :category "Silja"}}  (set result)) 
 			   "Only the Arne with Silja in live" ))))
-		     (finally  (rmdir-recursive tmp)))))
+     
+     (finally  (rmdir-recursive tmp)))))
 
 (deftest test-live-only
   (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
