@@ -12,6 +12,8 @@
 					;for repl purposes
   (:use (clojure stacktrace inspector)))
 
+
+
 (def *current-mbean-connection* (let [server (ManagementFactory/getPlatformMBeanServer)
 				      runtime (ManagementFactory/getRuntimeMXBean) ]
 				  (assoc {} 
@@ -117,7 +119,7 @@
 
 (defn remote-time 
   ([connection]
-     (when-let [runtime (:runtime connection)]
+     (when-let [#^RuntimeMXBean runtime (:runtime connection)]
        (Date. (+ (. runtime getStartTime) (. runtime getUptime)))))
 ([]
    (remote-time *current-mbean-connection*)))
@@ -128,10 +130,10 @@
      (remote-uptime *current-mbean-connection*))
   ([connection-or-timeunit]
      (if (associative? connection-or-timeunit)
-       (when-let [runtime (:runtime connection-or-timeunit)]
+       (when-let [#^RuntimeMXBean runtime (:runtime connection-or-timeunit)]
 	 (.getUptime runtime))
        (remote-uptime *current-mbean-connection* connection-or-timeunit)))
-  ([connection timeUnit]
+  ([connection #^TimeUnit timeUnit]
      (. timeUnit convert (remote-uptime connection) (. TimeUnit MILLISECONDS))))
      
 (defn mbean-server 
@@ -142,7 +144,7 @@
 
 (defn remote-pid
   ([connection]
-     (when-let [runtime (:runtime connection)]
+     (when-let [ #^RuntimeMXBean runtime (:runtime connection)]
        (let [name (. runtime getName)]
 	 (try
 	  (. Integer parseInt (second ( re-matches #"([0-9]+)@.*" name)))
@@ -205,10 +207,12 @@
      (finally (close-mbean-connection opened#)))))
 
 
+
 (deftest using-local-jmx
   (is (= (.getName (. JMX newMXBeanProxy (:server *current-mbean-connection*)
 		      (ObjectName. "java.lang:type=Runtime") RuntimeMXBean))
 	 (.getName (ManagementFactory/getRuntimeMXBean )))))
+
 
 (deftest using-another-local-jmx
   (if-let [jmxport (System/getProperty "com.sun.management.jmxremote.port")]

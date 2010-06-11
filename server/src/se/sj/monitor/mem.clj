@@ -119,6 +119,7 @@
   (filter #(not (nil? %)) 
 	  (map #(when (empty? %1) %2) (vals database) (keys database)))) 
 
+
 (deftest test-mem
 
   (let [ data (ref {})]
@@ -178,7 +179,7 @@
   (is (= '([-16 5]  [-14 76] [-12 65] [24 5])  
 	 (key-shift (by-name @data "Niklas") #(- % 20))) 
       "key-shift:ed seq of map entries")
-  (dosync (alter data with-keys-shifted #(. % startsWith "N") #(+ 1 %)))
+  (dosync (alter data with-keys-shifted (fn [#^String i] (. i startsWith "N")) #(+ 1 %)))
   (is (= {"Niklas" {5 5, 7 76, 9 65, 45 5}, 
 	   "Örjan" {4 5}, 
 	   "Olle" { 2 54 3 45}}

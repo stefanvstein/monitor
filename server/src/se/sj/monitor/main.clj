@@ -4,6 +4,7 @@
  
 (defn -main [& line]
   (System/setProperty "JEMonitor" "true")
+  (reset! exit-on-shutdown true)
   (if (not (empty? line))
     (when (= (first line) "server")
       (if (next line) 

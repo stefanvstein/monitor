@@ -12,9 +12,9 @@
 (def *next-key* (ref nil))
 (def *indices* (ref nil))
 
-(defn- causes [#^java.lang.Throwable e] 
+(defn- causes [e] 
   (take-while #(not (nil? %)) 
-	      (iterate #(when % (. % getCause)) 
+	      (iterate (fn [#^Throwable i] (when i (. i getCause))) 
 		       e)))
 
 (defonce date-format "yyyyMMdd")
@@ -30,10 +30,12 @@
 		       (inc (first last-entry))))))]
        #(dec (swap! the-next-key inc)))))
 
+
+; :cache-bytes (* 1024 1024 10)
 (defmacro using-db
   "Defines the database to use, that will be closed after body. Path is directory path to db store, dn-name is the name of the db, and indexed-keyword are keywords in data that will be indexed."
   [path db-name indexed-keywords & body]
-  `(when-let [db-env# (db-env-open ~path :allow-create true  :transactional true :txn-no-sync true)]
+  `(when-let [db-env# (db-env-open ~path  :allow-create true  :transactional true :txn-no-sync true)]
      (try
 	(when-let [db# (db-open db-env# ~db-name :allow-create true)]
 	  (try
@@ -48,6 +50,7 @@
 							       :key-creator-fn v#))) 
 					 {} ~indexed-keywords )]
 	       (try
+
 		(dosync
 		 (ref-set *db-env* db-env#)
 		 (ref-set *db* db#)

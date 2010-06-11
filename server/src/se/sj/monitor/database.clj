@@ -2,10 +2,11 @@
   (:use [se.sj.monitor db daynames mem])
   (:use clojure.test)
   (:use clojure.contrib.logging)
-  (:use cupboard.utils))
+  (:use cupboard.utils)
+  (:import (java.util Date Calendar)))
 
 "A wrapper around live data and persistent store"
-(def *live-data* (ref {}))
+(def *live-data* (ref nil))
 (defonce lock (Object.))
 
 (defmacro using-live
@@ -45,26 +46,6 @@
   ([name time-stamp value]
      (add-data name time-stamp value true)))
 
-;(defn clean-stored-data-older-than
-;  [timestamp]
-;  {:pre [(instance? java.util.Date timestamp)]}
-;  (when @*db*
-;    (let [timestamp-string (.format (java.text.SimpleDateFormat. date-format) timestamp)]
-;      (remove-until-from-db :date timestamp-string))))
-
-;(defn clean-stored-data-older-than
-;  [timestamp]
-;  {:pre [(instance? java.util.Date timestamp)]}
-;  (let [until (.format (java.text.SimpleDateFormat. date-format) timestamp)
-;	until-as-long (Long/parseLong until) 
-;	alldates (all-dates)
-;	dates-to-remove (filter (fn [adate] (> until-as-long (Long/parseLong adate))) alldates) ]
-;    (dorun (map (fn [a-date] 
-;		  (println (str (java.util.Date.) " About to remove " a-date))  
-;		  (remove-from-db :date a-date)
-;		  (println (str (java.util.Date.) " " a-date " removed")) 
-;		  (remove-date a-date)
-;		  (println (str (java.util.Date.) " " a-date " removed from dayname")) ) dates-to-remove))))
 
 (defn clean-stored-data-older-than
   [timestamp]
@@ -81,17 +62,17 @@
 
 (defn clean-live-data-older-than 
   "Remove data in live-data that has timestamp older than timestamp. Removes empty rows"
-  [timestamp]
+  [#^Date timestamp]
   {:pre [(instance? java.util.Date timestamp)]}
   (when @*live-data*
     (dosync
-     (alter *live-data* remove-from-each-while #(< (.getTime %) (.getTime timestamp)))
+     (alter *live-data* remove-from-each-while (fn [#^Date i] (< (.getTime i) (.getTime timestamp))))
      (alter *live-data* dissoc empty-names @*live-data*))))
 
 (defn- day-by-day
   [date]
-  (let [start (doto (. java.util.Calendar getInstance ) (.setTime date))
-	nextfn (fn nextfn [cal] 
+  (let [start (doto (. Calendar getInstance ) (.setTime date))
+	nextfn (fn nextfn [#^Calendar cal] 
 		  (lazy-seq 
 		   (cons (. cal getTime) 
 			 (nextfn (doto cal (.add java.util.Calendar/DATE 1))))))]
@@ -112,7 +93,7 @@
   ([pred]
      (when @*live-data*
        (filter pred (keys @*live-data*))))
-  ([lower upper]
+  ([#^Date lower #^Date upper]
      {:pre [(instance? java.util.Date lower)
 	    (instance? java.util.Date upper)]}
      (let [start (System/currentTimeMillis)
@@ -150,7 +131,7 @@
 
 
 (defn- data-by-unfiltered
-([lower upper & name-spec]
+([#^Date lower #^Date upper & name-spec]
  {:pre [(= java.util.Date (class lower) (class upper))]}
   (if (> (. lower getTime) (. upper getTime))
     nil
@@ -191,7 +172,7 @@
      ))))
 
 (defn data-by 
-  ([lower upper & name-spec]
+  ([#^Date lower #^Date upper & name-spec]
   {:pre [(= java.util.Date (class lower) (class upper))]}
 
   
@@ -249,6 +230,7 @@
   ([] @*comments*)
   ([from to]
      (throw (UnsupportedOperationException. "Currently not implemented"))))
+
 
 (deftest test-names-where-one
 

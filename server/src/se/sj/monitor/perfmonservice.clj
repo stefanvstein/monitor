@@ -5,21 +5,19 @@
   (:import (java.net Socket) (java.io PrintWriter))
   (:use (clojure stacktrace)))
 
-
-
 (defn- create-obj [line perfmon-names current-time]
   (parse-perfmon-string line 
-			(fn [identifier name] 
+			(fn onName [identifier name] 
 			  (store-name perfmon-names identifier name perfmon-columns))
-			(fn [identifier value] 
+			(fn onData [identifier value] 
 			  (when @current-time 
 			    (add-data (get-name perfmon-names identifier) 
 					   @current-time 
 					   value)))
-			(fn [a-comment] 
+			(fn onComment [a-comment] 
 			  (when @current-time 
 			    (add-comment @current-time a-comment)))
-			(fn [a] (swap! current-time (fn [_] a )))
+			(fn onTime [a] (swap! current-time (fn [_] a )))
 			))
 
 
@@ -29,7 +27,7 @@
      (let [names (ref {})
 	   current-time (atom nil)]
        (add-comment (str "Starts " info-string)) 
-       (with-open [input (reader source)] 
+       (with-open [input #^java.io.Closeable (reader source)] 
 	 (loop [data (line-seq input)] 
 	   (if  (stop-signal)
 	     (add-comment (str "Stops " info-string))

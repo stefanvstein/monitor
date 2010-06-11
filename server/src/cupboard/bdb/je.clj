@@ -806,7 +806,7 @@
 (defn db-cursor-delete
   "Deletes the record the cursor currently points to."
   [db-cursor]
-  (.delete @(db-cursor :cursor-handle)))
+  (.delete #^Cursor @(db-cursor :cursor-handle)))
 
 
 (defn db-cursor-replace

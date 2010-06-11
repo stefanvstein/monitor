@@ -46,7 +46,7 @@
 	result (apply data-by from to keyed-names)
 	final-result (HashMap.)]
     (dorun (map (fn [row]
-		  (. final-result put (HashMap. (keyworded-names-as-string (key row))) (TreeMap. (val row))))
+		  (. final-result put (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map (val row))))
 	
 	    result))
     final-result))
@@ -76,21 +76,21 @@
 				 i))))) {} keyworded-names)
 		final-result (HashMap.)] 
     (dorun (map (fn [row]
-		  (. final-result put (HashMap. (keyworded-names-as-string (key row))) (TreeMap. (val row))))
+		  (. final-result put (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map (val row))))
 		result))
     final-result))
 
 (defn raw-live-names []
   (let [result (reduce (fn [result a-name]
-	    (conj result (HashMap. (keyworded-names-as-string a-name))))
+	    (conj result (HashMap. #^java.util.Map (keyworded-names-as-string a-name))))
 	  [] 
 	  (names-where (fn [_] true)))]
-    (java.util.ArrayList. result)))
+    (java.util.ArrayList. #^java.util.Collection result)))
  
 (defn raw-names [from to]
   (let [start (System/currentTimeMillis)
-	res (java.util.ArrayList. (reduce (fn [result a-name]
-					 (conj result (HashMap. (keyworded-names-as-string a-name))))
+	res (java.util.ArrayList. #^java.util.Collection (reduce (fn [result a-name]
+					 (conj result (HashMap. #^java.util.Map (keyworded-names-as-string a-name))))
 				       [] 
 				       (names-where from to)))]
     ;(println (- (System/currentTimeMillis) start))
@@ -142,6 +142,7 @@
 
 ;(deftest simple
 ;  (is (not (nil? (byte-code-for "clojure.lang.PersistentArrayMap")))))
+
 
 (deftest keyworded
   (is (= {:Olle "Nisse" :Arne "Gulsot"} (names-as-keyworded {"Olle" "Nisse" "Arne" "Gulsot"})))

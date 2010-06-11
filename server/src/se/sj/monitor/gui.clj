@@ -23,16 +23,20 @@
 (defn redraw []
      (dorun (map (fn [frame] (.revalidate frame)) @frames)))
 
+(def exit-on-shutdown (atom false))
+
 (def *shutdown* #(do 
-		   (println "Shutdown :)")
 		   (when-let [t @runtime-thread]
 		     (swap! runtime-thread (fn [t] nil))
 		     (while (.isAlive t)
 			    (try
 			     (.interrupt t)
 			     (.join t)
-			     (catch InterruptedException _)))			     
-		     (println "runtime thread is terminated"))))
+			     (catch InterruptedException _)))
+
+		     (println "runtime thread is terminated"))
+		   (when @exit-on-shutdown
+		     (System/exit 0))))
 
 (def current-server (atom nil))
 (try

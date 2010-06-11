@@ -27,7 +27,7 @@
 	       (onData (:address s) (Double/parseDouble(:value s))))
 	 "I"  (onInfo value)
 	 "T"  (when-let [v (re-matches #"[0-9]{8}\s[0-9]{6}\s.+" value)]
-		(onTime (.parse (SimpleDateFormat. "yyyyMMdd HHmmss z") (.replace v ":" "")))))
+		(onTime (.parse (SimpleDateFormat. "yyyyMMdd HHmmss z") (.replace #^String v ":" "")))))
       (catch ParseException _)
       (catch NumberFormatException _)))))
 
