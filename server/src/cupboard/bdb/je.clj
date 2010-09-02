@@ -511,7 +511,22 @@
           :else (.put db-handle
                       (deref* (-> opts :txn :txn-handle)) key-entry data-entry))))
 
-
+(defn db-put-raw [db key data & opts-args]
+  "key and data is expected to be byte arrays"
+  (let [defaults {:txn nil}
+	opts (merge defaults (args-map opts-args))
+	key-entry (DatabaseEntry. key)
+	data-entry (DatabaseEntry. data)
+	#^Database db-handle @(db :db-handle)]
+    (cond (opts :no-dup-data) (.putNoDupData db-handle
+                                             (deref* (-> opts :txn :txn-handle))
+                                             key-entry data-entry)
+          (opts :no-overwrite) (.putNoOverwrite db-handle
+                                                (deref* (-> opts :txn :txn-handle))
+                                                key-entry data-entry)
+          :else (.put db-handle
+                      (deref* (-> opts :txn :txn-handle)) key-entry data-entry))))
+    
 (defn db-get
   "Optional keyword arguments:
      :search-both --- uses Database.getSearchBoth with data specified in :data
@@ -579,9 +594,10 @@
                         (let [data (unmarshal-db-entry data-entry)
                               sec-data (key-creator-fn data)]
                           (if sec-data
-                              (do (marshal-db-entry sec-data result-entry)
-                                  true)
-                              false))))
+			    (do
+			      (marshal-db-entry sec-data result-entry)
+			      true)
+			    false))))
         conf-obj (doto (SecondaryConfig.)
                    (.setKeyCreator key-creator)
                    (.setAllowCreate (conf :allow-create))

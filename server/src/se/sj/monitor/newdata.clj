@@ -103,21 +103,31 @@
 (defn name-for-index [day index]
   (get (:by-index (get-day day)) index))
 
-(def *date-formatter* nil)
+;(def *date-formatter* nil)
 
-(defn new-date-formatter []
-  (SimpleDateFormat. "yyyyMMdd"))
+;(defn new-date-formatter []
+;  (SimpleDateFormat. "yyyyMMdd"))
 
+(defn day-as-int 
+  ([date]
+     (let [par #(Integer/parseInt (.format (SimpleDateFormat. "yyyyMMdd") %))]
+       (if date
+	 (par date)
+	 (par (Date.)))))
+  ([]
+     (day-as-int nil)))
+
+    
 
 ;  ********************************************HERE******** also, add lru removal
 (defn to-bytes [data]
   (let [array-stream (ByteArrayOutputStream.)
 	data-out (DataOutputStream. array-stream)
-	date-format  (if *date-formatter*
-		       *date-formatter*
-		       (new-date-formatter))
+;	date-format  (if *date-formatter*
+;		       *date-formatter*
+;		       (new-date-formatter))
 	time-stamp (:time data)
-	day (Integer/parseInt (.format #^SimpleDateFormat date-format time-stamp))
+	day (day-as-int time-stamp)
 	the-day (get-day day)]
     
     (.writeInt data-out day) ;denna skall bort
@@ -189,14 +199,14 @@
   (let [df (SimpleDateFormat. "yyyyMMdd HHmmss")]
     (reset! lru [])
     (reset! current-days {})
-    (binding [*date-formatter* (new-date-formatter)]
+
       (let [data (assoc {} :time (.parse df "20071126 033332")  :value 23.0 :host "1" :counter "3" :category "2" :instance "4" :slangbella "454")
 	    data2 (assoc {} :time (.parse df "20071126 033332") :value 24.0 :host "two" :counter "four" :category "one" :instance "five")]
 	
 	(is (= 0 (index-for-name "Tokstolle" (:host data))))
 	(is (= 0 (index-for-name "Tokstolle" (:host data))))
 	(is (= 1 (index-for-name "Tokstolle" (:category data))))
-	(is (= 2 (index-for-name "Tokstolle" (:slangbella data))))))))
+	(is (= 2 (index-for-name "Tokstolle" (:slangbella data)))))))
 
 
 
@@ -204,7 +214,7 @@
  (let [tmp (make-temp-dir)]
    (try
     (let [df (SimpleDateFormat. "yyyyMMdd HHmmss")]
-      (binding [*date-formatter* (new-date-formatter)]
+
 	(let [data (assoc {} :time (.parse df "20071126 033332")  :value 23.0 :host "1" :counter "3" :category "2" :instance "4")
 	      another-data (assoc {} :time (.parse df "20071125 033332")  :value 2.0 :host "1" :counter "3" :category "2" :instance "4")
 	      some-more-data (assoc {} :time (.parse df "20071125 033332") :value 3.0 :host "1" :counter "33" :category "2" :instance "44")
@@ -257,14 +267,14 @@
 					   (is (= 23.0 (:value (from-bytes bytes)))))
 				       
 					 ))))))
-    (finally (rmdir-recursive tmp)))))
+    (finally (rmdir-recursive tmp))))
 
 
 (deftest testindices
   (reset! current-days {})
   (reset! lru [])
   (let [df (SimpleDateFormat. "yyyyMMdd HHmmss")]
-    (binding [*date-formatter* (new-date-formatter)]
+
       (let [data (assoc {} :time (.parse df "20071126 033332")  :value 23.0 :host "1" :counter "3" :category "2" :instance "4")]
 	
 	(let [bytes (to-bytes data)]
@@ -288,6 +298,6 @@
 	  (is (= (reduce #( conj %1 (name-for-index 20071127 %2)) [] (range 6) )
 		 ["1" "2" "3" "4" "oljemagnat" "magnaten"]))
 	  (is (= (reduce #( conj %1 (index-for-name 20071126 %2)) [] ["1" "2" "3" "4" "oljemagnat" "magnaten"] )
-		 (range 6))))))))
+		 (range 6)))))))
 
       

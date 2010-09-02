@@ -6,6 +6,7 @@
 
 
 (def *clj-types* [nil
+		  :byte-array
                   java.lang.Boolean
                   java.lang.Character
                   java.lang.Byte
@@ -35,6 +36,8 @@
 
 (defn clj-type [data]
   (condp #(%1 %2) data
+    nil? nil
+    #(and (.isArray (class %)) (= Byte/TYPE (.getComponentType (class %)))) :byte-array
     map? :map
     set? :set
     list? :list
@@ -100,6 +103,9 @@
   (def-marshal-write :vector seq-write)
   (def-marshal-write :seq seq-write)
   (def-marshal-write :set seq-write))
+(def-marshal-write :byte-array
+  (fn [#^TupleOutput tuple-output data]
+    (.writeFast tuple-output data)))
 (def-marshal-write :map
   (fn [tuple-output data]
     (marshal-write tuple-output (count data))
@@ -188,6 +194,13 @@
   (def-unmarshal-read :seq (seq-read-fn (list) reverse))
   (def-unmarshal-read :vector (seq-read-fn [] identity))
   (def-unmarshal-read :set (seq-read-fn #{} identity)))
+(def-unmarshal-read :byte-array 
+  (fn [#^TupleInput tuple-input]
+    (let [all-data (.getBufferBytes tuple-input)
+	  size (- (.getBufferLength tuple-input) 1)
+	  dest (byte-array size)]
+      (System/arraycopy all-data 1 dest 0 size)
+      dest)))
 (def-unmarshal-read :map
   (fn [tuple-input]
     (let [len (unmarshal-read tuple-input)]
@@ -200,9 +213,9 @@
 
 (defn unmarshal-db-entry [#^DatabaseEntry db-entry]
   (if (= 0 (.getSize db-entry))
-      nil
-      (let [tuple-input (TupleBinding/entryToInput db-entry)]
-        (unmarshal-read tuple-input))))
+    nil
+    (let [tuple-input (TupleBinding/entryToInput db-entry)]
+      (unmarshal-read tuple-input))))
 
 (defn unmarshal-db-entry*
   "A helper function which returns a [key data] pair given the result of a
