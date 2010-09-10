@@ -50,12 +50,12 @@
     final-result))
 
 (defn raw-live-names []
-  (println "Raw-live-names")
+  ;(println "Raw-live-names")
   (let [result (reduce (fn [result a-name]
 	    (conj result (HashMap. #^java.util.Map (keyworded-names-as-string a-name))))
 	  [] 
 	  (names-where (fn [_] true)))]
-    (println result)
+   ; (println result)
     (java.util.ArrayList. #^java.util.Collection result)))
  
 (defn raw-names [from to]
