@@ -9,6 +9,7 @@
      (catch InterruptedException e))))
 
 (using-logger
+ (using-live
  (using-history "/home/stefan/testdb"
 		(let [interval 15]
 		  (serve-clients 0 3030 #(deref stop-signal) 
@@ -41,4 +42,4 @@
 							(java.util.Date. (- (System/currentTimeMillis) 
 									    (* 2 1000 60 60))))))
 
-					 ])))))
+					 ]))))))

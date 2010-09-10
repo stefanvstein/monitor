@@ -229,6 +229,9 @@
     (db-env-set-mutable-opts opts conf-obj)
     (.setMutableConfig env-handle conf-obj)))
 
+(defn db-env-db-names [db-env]
+  (let [#^Environment env-handle @(db-env :env-handle)]
+    (.getDatabaseNames env-handle)))
 
 (defn db-env-remove-db [db-env db-name & opts-args]
   (let [defaults {:txn nil}
@@ -511,22 +514,7 @@
           :else (.put db-handle
                       (deref* (-> opts :txn :txn-handle)) key-entry data-entry))))
 
-(defn db-put-raw [db key data & opts-args]
-  "key and data is expected to be byte arrays"
-  (let [defaults {:txn nil}
-	opts (merge defaults (args-map opts-args))
-	key-entry (DatabaseEntry. key)
-	data-entry (DatabaseEntry. data)
-	#^Database db-handle @(db :db-handle)]
-    (cond (opts :no-dup-data) (.putNoDupData db-handle
-                                             (deref* (-> opts :txn :txn-handle))
-                                             key-entry data-entry)
-          (opts :no-overwrite) (.putNoOverwrite db-handle
-                                                (deref* (-> opts :txn :txn-handle))
-                                                key-entry data-entry)
-          :else (.put db-handle
-                      (deref* (-> opts :txn :txn-handle)) key-entry data-entry))))
-    
+
 (defn db-get
   "Optional keyword arguments:
      :search-both --- uses Database.getSearchBoth with data specified in :data
@@ -550,7 +538,7 @@
     (unmarshal-db-entry* result key-entry data-entry)))
 
 
-(defn db-delete [db key & opts-args]
+(defn db-delete [db key & opts-args]	
   (let [defaults {:txn nil}
         opts (merge defaults (args-map opts-args))
         key-entry (marshal-db-entry key)

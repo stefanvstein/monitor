@@ -21,22 +21,6 @@
 	  [] names)]
 (apply array-map result)))
 
-;(defn byte-code-for [name]
-;  (try
-;   (let [clazz (. (.getClassLoader clojure.lang.PersistentArrayMap) loadClass name)
-;	 resource (str (re-gsub #"\." "/" (.getName clazz)) ".class")
-;	 outputStream (ByteArrayOutputStream.)]
-;     (with-open [input (.. clazz (getClassLoader) (getResourceAsStream resource))
-;		 output outputStream]
-;       (copy input output))
-;     (.toByteArray outputStream))
-;   (catch Exception e
-;     (cond 
-;      (instance? ClassNotFoundException (root-cause e)) 
-;      (throw (RemoteException. "Remote class not found" e))
-;      (instance? IOException (root-cause e)) 
-;      (throw (RemoteException. "Bytecode for remote class could not be loaded" e))))))
-
 (defn raw-data [from to names]
   (when (odd? (count names))
     (throw (IllegalArgumentException. "Odd number of names")))
@@ -52,21 +36,6 @@
     final-result))
 
 
-;(defn raw-live-data [names]
-;  (let [keyed-names (names-as-keyworded names)
-;       result (data-by (fn [a-name] 
-;			 (every? (fn [requirement] 
-;				   (= ((key requirement) a-name) 
-;				      (val requirement))) 
-;				 keyed-names)))
-;	final-result (HashMap.)] 
-;	(dorun (map (fn [row]
-;		  (. final-result put (HashMap. (keyworded-names-as-string (key row))) (TreeMap. (val row))))
-;		 result))
-;	final-result
-;
-;    ))
-
 (defn raw-live-data [names]
   (let [keyworded-names (reduce (fn [r i] (conj r (names-as-keyworded i))) [] names)
 	result (reduce (fn [r i] (merge r (data-by (fn [a-name] 
@@ -81,10 +50,12 @@
     final-result))
 
 (defn raw-live-names []
+  (println "Raw-live-names")
   (let [result (reduce (fn [result a-name]
 	    (conj result (HashMap. #^java.util.Map (keyworded-names-as-string a-name))))
 	  [] 
 	  (names-where (fn [_] true)))]
+    (println result)
     (java.util.ArrayList. #^java.util.Collection result)))
  
 (defn raw-names [from to]
@@ -199,15 +170,17 @@
 					 (dparse "20100101 000000") 
 					 (dparse "20100101 100004")))
 				 #{{"host" "Arne" "counter" "Nisse"} 
-				   {"host" "Arne" "counter" "Olle"}}))
+				   {"host" "Arne" "counter" "Olle"}
+				   {"host" "Bengt" "counter" "Olle"} ;Fix this should be here, since filtering should occur
+				   }))
 			 (is (= (. server rawData 
 				   (dparse "20100101 000000") 
 				    (dparse "20100101 100004")
 				   (java.util.ArrayList. ["host" "Arne"]))
-				{{"host" "Arne" "counter" "Nisse"} 
-				 {(dparse "20100101 100001") 1  (dparse "20100101 100003") 3}
+				{ {"host" "Arne" "counter" "Nisse"}
+				 {(dparse "20100101 100001") 1.0  (dparse "20100101 100003") 3.0}
 				 {"host" "Arne" "counter" "Olle"} 
-				 {(dparse "20100101 100002") 2}}))))))
+				  {(dparse "20100101 100002") 2.0}}))))))
      
      (finally (rmdir-recursive tmp)
 	      (swap! stop-signal (fn [_] true))

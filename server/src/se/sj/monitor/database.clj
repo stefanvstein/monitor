@@ -1,5 +1,5 @@
 (ns se.sj.monitor.database
-  (:use [se.sj.monitor db daynames mem])
+  (:use [se.sj.monitor db mem])
   (:use clojure.test)
   (:use clojure.contrib.logging)
   (:use cupboard.utils)
@@ -7,13 +7,16 @@
 
 "A wrapper around live data and persistent store"
 (def *live-data* (ref nil))
-(defonce lock (Object.))
+;(defonce lock (Object.))
 
 (defmacro using-live
   "A binding around using another live data" 
   [& form]
-  `(binding [*live-data* (ref {})]
-     (do ~@form)))
+  `(do 
+     (dosync (alter *live-data* (fn [_#] {})))
+     (try
+      (do ~@form)
+      (finally (dosync (alter *live-data* (fn [_#] nil)))))))
 
 (defmacro using-history
   "A binding around using history, persisted data. Path can be String or File object"
@@ -23,14 +26,9 @@
 		      (java.io.File. ~path))]
      (when-not (. directory# isDirectory)
        (. directory# mkdirs))
-     (using-db ~path "rawdata" [:date :host :category :counter :instance :jvm] 
-	       (using-dayname-db @*db-env* "daynames" ~@form))))
+     (using-db-env ~path ~@form))) 
+	       
 
-(defn ensure-name [name date]
-  (if-let [current (get-from-dayname date)]
-    (if (not (contains? current name))
-      (add-to-dayname date (conj current name)))
-    (add-to-dayname date (conj #{} name))))
 
 (defn add-data 
   "Adding data to the store, live if bound, and history if bound. Name is expected to be a map of keyword and string value, possibly used as indices of the data. Time-stamp is expected to be a Date object."
@@ -39,9 +37,8 @@
   (when @*live-data* 
     (dosync (alter *live-data* add name time-stamp value)))
   (when save?
-    (when @*db*
-      (locking lock
-	(ensure-name name time-stamp))
+    (when @*db-env*
+;      (println "<-" name time-stamp value)
       (add-to-db value time-stamp name))))
   ([name time-stamp value]
      (add-data name time-stamp value true)))
@@ -50,15 +47,10 @@
 (defn clean-stored-data-older-than
   [timestamp]
   {:pre [(instance? java.util.Date timestamp)]}
-  (let [until (.format (java.text.SimpleDateFormat. date-format) timestamp)
-	until-as-long (Long/parseLong until)  
-	alldates (all-dates)
-	dates-to-remove (filter (fn [adate] (> until-as-long (Long/parseLong adate))) alldates) ]
-
-    (while (remove-spec-from-db until-as-long))
+  (let [until (day-as-int timestamp)  
+	dates-to-remove (filter (fn [adate] (> until adate)) (all-dates))]
     (dorun (map (fn [a-date] 
-		  (remove-date a-date)) dates-to-remove))
- ))
+		  (remove-date a-date)) dates-to-remove))))
 
 (defn clean-live-data-older-than 
   "Remove data in live-data that has timestamp older than timestamp. Removes empty rows"
@@ -79,7 +71,7 @@
     (nextfn start)))
 
 (defn- day-seq [lower upper]
-  (let [df (java.text.SimpleDateFormat. date-format)
+  (let [df (java.text.SimpleDateFormat. "yyyyMMdd")
 	day-after-upper (. (doto (. java.util.Calendar getInstance)
 			     (.setTime upper)
 			     (.add java.util.Calendar/DATE 1)) getTime)
@@ -98,7 +90,8 @@
 	    (instance? java.util.Date upper)]}
      (let [start (System/currentTimeMillis)
 	   items (atom 0)
-	   df (java.text.SimpleDateFormat. date-format)]
+	   ;df (java.text.SimpleDateFormat. date-format)
+	   ]
        (if (> (. lower getTime) (. upper getTime))
 	 (names-where upper lower)
 	 (let [res (seq (reduce (fn [result-set names-for-a-day]
@@ -107,7 +100,7 @@
 				    (apply conj result-set names-for-a-day)))
 				#{}
 				(map (fn [day]
-				       (get-from-dayname day))
+				       (get-from-dayname (day-as-int day)))
 				     (day-seq lower upper))))]
 	   res)))))
 
@@ -142,46 +135,69 @@
 				(list (list (first %2) (second %2)))))
 			   {} 
 			   (partition 2 name-spec))
-	  df (java.text.SimpleDateFormat. date-format)
-	  combinations (apply apply-for (map #(list :date (. df format %)) 
-					     (day-seq lower upper)) 
-			      (vals spec-map)) 
+	  ;{:b ((:b "Beril")), :a ((:a "Nisse") (:a "adam"))}
+;	  df (java.text.SimpleDateFormat. date-format)
+	;  combinations (apply apply-for (map #(list :date (. df format %)) 
+	;				     (day-seq lower upper)) 
+	;		      (vals spec-map)) 
+	  combinations (apply apply-for (day-seq lower upper) (vals spec-map)) 
+;	 (((:date "20071121") (:b "Beril") (:a "Nisse")) 
+;	  ((:date "20071121") (:b "Beril") (:a "adam"))
+;	  ((:date "20071122") (:b "Beril") (:a "Nisse"))
+;	  ((:date "20071122") (:b "Beril") (:a "adam"))
+;	  ((:date "20071123") (:b "Beril") (:a "Nisse")) 
+;	  ((:date "20071123") (:b "Beril") (:a "adam")))
+
+;	  combinations-vectors (map (fn [row] 
+;				      (reduce #(conj %1 (first %2) (second %2)) 
+;					      [] 
+;					      row)) 
+;				    combinations)
 	  combinations-vectors (map (fn [row] 
-				      (reduce #(conj %1 (first %2) (second %2)) 
-					      [] 
-					      row)) 
-				    combinations)]
+				      (into [(first row)] 
+					    (reduce #(conj %1 (first %2) (second %2)) 
+						    [] 
+						    (rest row)))) 
+				    combinations)
+
+;	 ([:date "20071121" :b "Beril" :a "Nisse"] 
+; 	  [:date "20071121" :b "Beril" :a "adam"] 
+;	  [:date "20071122" :b "Beril" :a "Nisse"] 
+;	  [:date "20071122" :b "Beril" :a "adam"] 
+;	  [:date "20071123" :b "Beril" :a "Nisse"] 
+;	  [:date "20071123" :b "Beril" :a "adam"])
+	  ]
 
      (reduce (fn [result names-and-data-for-a-day]
 	       (if-let [data-added 
 			(apply 
-			 all-in-every (fn [data-seq] 
-					(reduce #(add %1 
-						      (first %2) 
-						      (first(next %2)) 
-						      (first(nnext %2))) 
+			 get-from-db (fn [data-seq] 
+					(reduce (fn [d h]
+;						  (println "->" h)
+						  (add d 
+						      (first h) 
+						      (first(next h)) 
+						      (first(nnext h)))) 
 						result
 						data-seq))
-			 names-and-data-for-a-day)]
+			 (day-as-int (first names-and-data-for-a-day))
+			 (rest names-and-data-for-a-day))]
 		 data-added 
 		 result))
 	     {} 
-	     combinations-vectors)
-     
-    
-     ))))
+	     combinations-vectors)))))
 
 (defn data-by 
   ([#^Date lower #^Date upper & name-spec]
   {:pre [(= java.util.Date (class lower) (class upper))]}
 
   
-  (when-not (nil? @*db*)
+  (when-not (nil? @*db-env*)
     (if (> (. lower getTime) (. upper getTime))
       (apply data-by upper lower name-spec)
       (do
 	(let [data (reduce (fn [b pair] 
-			     (if (contains? (set (keys @*indices*)) (first pair))  
+			     (if (contains? #{:host :category :counter :instance} (first pair))  
 			       (conj b (first pair) (second pair))
 			       b))
 			   []
@@ -273,7 +289,7 @@
 
 
 (deftest test-remove
-(println "Hammarby")
+;(println "Hammarby")
   (let [tmp (make-temp-dir)
 	df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)]
@@ -281,20 +297,21 @@
      (using-live 
       (using-history tmp
 		     (let [baseDate (.getTime (dparse "20100111 100000"))]
-		       (println (str "Start " (java.util.Date.)))
+		       ;(println (str "Start " (java.util.Date.)))
 		       (loop [i 0]
 			 (add-data {:host "Arne"} (java.util.Date. (+ i baseDate))  (+ i 32))
 			 (if (> 5000 i)
 			   (recur (inc i))
-			   (println (str "Added " i))))
-		       (println (str "Cleaning " (java.util.Date.)))
+;			   (println (str "Added " i))
+			   ))
+		       ;(println (str "Cleaning " (java.util.Date.)))
 		       (clean-stored-data-older-than (dparse "20100112 100000")))
-		       (println (str "Done " (java.util.Date.)))
+		       ;(println (str "Done " (java.util.Date.)))
 )) (finally  (rmdir-recursive tmp)))))
 
 
 (deftest test-names-where-many
-  (println "Running commented")
+;  (println "Running commented")
   (let [tmp (make-temp-dir)
 	df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)]

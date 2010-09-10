@@ -1,6 +1,6 @@
 (ns cupboard.bdb.je-marshal
   (:use cupboard.utils)
-  (:import [org.joda.time DateTime LocalDate LocalTime LocalDateTime DateTimeZone])
+;  (:import [org.joda.time DateTime LocalDate LocalTime LocalDateTime DateTimeZone])
   (:import [com.sleepycat.je DatabaseEntry OperationStatus]
            [com.sleepycat.bind.tuple TupleBinding TupleInput TupleOutput]))
 
@@ -18,10 +18,10 @@
                   java.lang.Double
                   java.lang.String
                   java.util.Date
-                  org.joda.time.DateTime
-                  org.joda.time.LocalDate
-                  org.joda.time.LocalTime
-                  org.joda.time.LocalDateTime
+ ;                 org.joda.time.DateTime
+ ;                 org.joda.time.LocalDate
+ ;                 org.joda.time.LocalTime
+ ;                 org.joda.time.LocalDateTime
                   java.util.UUID
                   clojure.lang.Keyword
                   clojure.lang.Symbol
@@ -56,7 +56,7 @@
 
 (def-marshal-write nil (fn [_] nil))
 (def-marshal-write java.lang.Boolean .writeBoolean)
-(def-marshal-write java.lang.Boolean .writeBoolean)
+;(def-marshal-write java.lang.Boolean .writeBoolean)
 (def-marshal-write java.lang.Character
   (fn [#^TupleOutput tuple-output #^java.lang.Character data]
     (.writeChar tuple-output (int data))))
@@ -73,19 +73,20 @@
 (def-marshal-write java.lang.String .writeString)
 (def-marshal-write java.util.Date
   (fn [#^TupleOutput tuple-output #^java.util.Date data]
-    (.writeString tuple-output (str (.withZone (DateTime. data) DateTimeZone/UTC)))))
-(def-marshal-write DateTime
-  (fn [#^TupleOutput tuple-output #^DateTime data]
-    (.writeString tuple-output (str (.withZone data DateTimeZone/UTC)))))
-(def-marshal-write LocalDate
-  (fn [#^TupleOutput tuple-output #^LocalDate data]
-    (.writeString tuple-output (str data))))
-(def-marshal-write LocalTime
-  (fn [#^TupleOutput tuple-output #^LocalTime data]
-    (.writeString tuple-output (str data))))
-(def-marshal-write LocalDateTime
-  (fn [#^TupleOutput tuple-output #^LocalDateTime data]
-    (.writeString tuple-output (str data))))
+    (.writeLong tuple-output (.getTime data))))
+    ;(.writeString tuple-output (str (.withZone (DateTime. data) DateTimeZone/UTC)))))
+;(def-marshal-write DateTime
+;  (fn [#^TupleOutput tuple-output #^DateTime data]
+;    (.writeString tuple-output (str (.withZone data DateTimeZone/UTC)))))
+;(def-marshal-write LocalDate
+;  (fn [#^TupleOutput tuple-output #^LocalDate data]
+;    (.writeString tuple-output (str data))))
+;(def-marshal-write LocalTime
+;  (fn [#^TupleOutput tuple-output #^LocalTime data]
+;    (.writeString tuple-output (str data))))
+;(def-marshal-write LocalDateTime
+;  (fn [#^TupleOutput tuple-output #^LocalDateTime data]
+;    (.writeString tuple-output (str data))))
 (def-marshal-write java.util.UUID
   (fn [#^TupleOutput tuple-output #^java.util.UUID uuid]
     (.writeLong tuple-output (.getMostSignificantBits uuid))
@@ -161,15 +162,16 @@
 (def-unmarshal-read java.lang.String .readString)
 (def-unmarshal-read java.util.Date
   (fn [#^TupleInput tuple-input]
-    (java.util.Date. (long (.getMillis (DateTime. (.readString tuple-input)))))))
-(def-unmarshal-read DateTime
-  (fn [#^TupleInput tuple-input] (DateTime. (.readString tuple-input))))
-(def-unmarshal-read LocalDate
-  (fn [#^TupleInput tuple-input] (LocalDate. (.readString tuple-input))))
-(def-unmarshal-read LocalTime
-  (fn [#^TupleInput tuple-input] (LocalTime. (.readString tuple-input))))
-(def-unmarshal-read LocalDateTime
-  (fn [#^TupleInput tuple-input] (LocalDateTime. (.readString tuple-input))))
+    (java.util.Date. (.readLong tuple-input))))
+;    (java.util.Date. (long (.getMillis (DateTime. (.readString tuple-input)))))))
+;(def-unmarshal-read DateTime
+;  (fn [#^TupleInput tuple-input] (DateTime. (.readString tuple-input))))
+;(def-unmarshal-read LocalDate
+;  (fn [#^TupleInput tuple-input] (LocalDate. (.readString tuple-input))))
+;(def-unmarshal-read LocalTime
+;  (fn [#^TupleInput tuple-input] (LocalTime. (.readString tuple-input))))
+;(def-unmarshal-read LocalDateTime
+;  (fn [#^TupleInput tuple-input] (LocalDateTime. (.readString tuple-input))))
 (def-unmarshal-read java.util.UUID
   (fn [#^TupleInput tuple-input] (java.util.UUID.
                                   (.readLong tuple-input)
