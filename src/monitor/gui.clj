@@ -196,13 +196,12 @@
       (.setDefaultCloseOperation (JFrame/DISPOSE_ON_CLOSE))
       (.addWindowListener (proxy [WindowAdapter] []
 			   (windowClosed [window-event]
-					 (println "closed")
 					 (swap! frames #(disj % frame))
 					 (proxy-super windowClosed window-event)
 					 (when (= 0 (count @frames)) (exit)))))
 					 
-      (.setTitle "Monitoring Window")
-      (.setName "Monitoring Window")
+      (.setTitle (:name contents))
+      (.setName (:name contents))
       (.setMinimumSize (Dimension. 300 300)) 
       (doto (.getContentPane) 
 	(.setLayout ( BorderLayout.))

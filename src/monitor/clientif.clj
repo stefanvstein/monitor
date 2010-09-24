@@ -1,6 +1,6 @@
 (ns monitor.clientif
   (:import (java.io ByteArrayOutputStream IOException ObjectOutputStream ObjectInputStream))
-  (:import (monitor ServerInterface))
+  (:import (monitor ServerInterface ServerInterface$Granularity ServerInterface$Transform))
   (:import (java.rmi.server UnicastRemoteObject))  
   (:import (java.rmi RemoteException NoSuchObjectException))
   (:import (java.net ServerSocket Socket InetAddress SocketTimeoutException))
@@ -68,18 +68,17 @@
   
 (def remote (atom nil))
 (def exported (proxy [ServerInterface] []
-			 (rawData [from# to# names#] 
-				  (raw-data from# to# names#))
-			 (rawLiveData [ i#] 
-				      (raw-live-data i#))
-			 (rawLiveNames []
-				       (raw-live-names))
-			 (rawNames [from# to#]
-				   (raw-names from# to#))
-;			 (classData [name#]
-;				    (byte-code-for name#))
-			 (ping [])
-			 ))
+		(rawData [from# to# names# transform# granularity#]
+			 (println "Raw data for " from# " to " to#)
+			 (raw-data from# to# names#))
+		(rawLiveData [ i# transform#] 
+			     (raw-live-data i#))
+		(rawLiveNames []
+			      (raw-live-names))
+		(rawNames [from# to#]
+			  (raw-names from# to#))
+		(ping [])
+		))
 
 (defmacro serve-clients [port transfer-port stop-fn & form]
   `(try
@@ -174,8 +173,11 @@
 				   }))
 			 (is (= (. server rawData 
 				   (dparse "20100101 000000") 
-				    (dparse "20100101 100004")
-				   (java.util.ArrayList. ["host" "Arne"]))
+				   (dparse "20100101 100004")
+				   (java.util.ArrayList. ["host" "Arne"])
+				   ServerInterface$Transform/Raw
+				   ServerInterface$Granularity/Second)
+				  
 				{ {"host" "Arne" "counter" "Nisse"}
 				 {(dparse "20100101 100001") 1.0  (dparse "20100101 100003") 3.0}
 				 {"host" "Arne" "counter" "Olle"} 

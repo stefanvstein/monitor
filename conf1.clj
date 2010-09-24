@@ -17,12 +17,12 @@
 				 (serve [(fn java6local [] (jmx-java6 (fn sleep [] 
 						     (sleepSeconds interval stop-signal)
 						     @stop-signal)))
-		;			 (fn java6Java2D [] (jmx-java6 "Java2D" 
-		;					  "ladmi2338" 
-		;					  3031 
-		;					  (fn sleep [] 
-		;					    (sleepSeconds interval stop-signal)
-		;					    @stop-signal)))
+					 (fn java6Java2D [] (jmx-java6 "Java2D med margarin på" 
+							  "localhost" 
+							  3031 
+							  (fn sleep [] 
+							    (sleepSeconds interval stop-signal)
+							    @stop-signal)))
 
 					 (perfmon-connection "mssj022" 3434 (fn []  @stop-signal) 
 							     ".*" 

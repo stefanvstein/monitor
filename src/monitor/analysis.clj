@@ -1,6 +1,6 @@
 (ns monitor.analysis
   (:use (clojure stacktrace))
-  (:use (monitor commongui))
+  (:use (monitor commongui tools))
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
@@ -17,7 +17,8 @@
   (:import (java.text SimpleDateFormat))
   (:import (org.jfree.chart.axis NumberAxis))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities))
-  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond)))
+  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond))
+  (:import (monitor SplitDateSpinners)))
 
 
 (defn on-update [names combomodels-on-center centerPanel add-button]
@@ -73,9 +74,16 @@
 
 			
 (defn on-add-to-analysis [from to name-values graph colors chart add-to-table add-column server]
-  (.start (Thread. #(let [result (get-data from
-					   to
-					   name-values server)]
+					;  (.start (Thread.
+
+	   (future  
+
+	     (let [result (reduce (fn [c e]
+					     (merge c (get-data (first e)
+								(second e)
+								name-values server)))
+					   {}
+					   (full-days-between from to))]
 		      (SwingUtilities/invokeLater 
 		       (fn [] 
 			 (.setNotify chart false)
@@ -118,23 +126,32 @@
 				     result))
 			 (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
 			 (.setNotify chart true))))
-		   "Data Retriever")))
+		   ))
+;)
 
 
 (defn analysis-add-dialog [contents server]
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
-	from (let [model (doto (SpinnerDateModel.)
-			   (.setCalendarField Calendar/DAY_OF_MONTH))
-		   spinner (JSpinner. model)]
-;	       (.setCalendarField model Calendar/DAY_OF_MONTH)
-	       (.setEditor spinner (JSpinner$DateEditor. spinner "yyyy-MM-dd"))
-	       spinner)
-		
-	to (let [model (SpinnerDateModel.)
-		 spinner (JSpinner. model)]
-	     (.setCalendarField model Calendar/DAY_OF_MONTH)
-	     (.setEditor spinner (JSpinner$DateEditor. spinner "yyyy-MM-dd"))
-	     spinner)
+	from-model (let [d (Date.)
+			c (Calendar/getInstance)
+		     
+			startd (.getTime (doto c
+					   (.setTime d)
+					   (.add Calendar/YEAR -10)))
+			endd (.getTime (doto c
+					 (.setTime d)
+					 (.add Calendar/YEAR +1)))]
+		     (SplitDateSpinners. d endd startd ))		
+	to-model (let [d (Date.)
+			c (Calendar/getInstance)
+		     
+			startd (.getTime (doto c
+					   (.setTime d)
+					   (.add Calendar/YEAR -10)))
+			endd (.getTime (doto c
+					 (.setTime d)
+					 (.add Calendar/YEAR +1)))]
+		     (SplitDateSpinners. d endd startd ))		
 
 	combomodels-on-center (atom {})
 
@@ -145,8 +162,8 @@
 						(conj result (key name-combomodel) the-value)
 						result)))
 					  []  @combomodels-on-center)]
-		(on-add-to-analysis (.getDate (.getModel from))
-				    (.getDate (.getModel to))
+		(on-add-to-analysis (.getDate from-model)
+				    (.getDate to-model)
 				    name-values
 				    (:time-series contents)
 				    (:colors contents)
@@ -176,23 +193,47 @@
 	   BorderLayout/SOUTH)
 
 
-      (let [panel (JPanel.)]      
+      (let [panel (JPanel.)
+	    from-panel (JPanel.)
+	    to-panel (JPanel.)
+	    update-panel (JPanel.)]
+	(. panel setLayout (BorderLayout.))
 	(. contentPane add panel BorderLayout/NORTH)
 	(doto panel
-	  (.setLayout (FlowLayout. FlowLayout/CENTER))
-	  (.add (JLabel. "From:"))
-	  (.add from)
-	  (.add (JLabel. "To:"))
-	  (.add to)
-	  (.add (let [update (JButton. "Update")
-		      onUpdate (fn [] 
-				 (let [from (.. from (getModel) (getDate))
-				       to (.. to (getModel) (getDate))]
-				   (let [names (get-names from to server)]
-				     (on-update names combomodels-on-center centerPanel add)
-				     (.pack dialog))))]
+	  (. add from-panel BorderLayout/NORTH)
+	  (. add to-panel BorderLayout/CENTER)
+	  (. add update-panel BorderLayout/SOUTH))
+	(doto from-panel
+	  (.setLayout (FlowLayout. FlowLayout/TRAILING ))
+	  (.add (JLabel. "From date:"))
+	  (.add (.yearSpinner from-model))
+	  (.add (.monthSpinner from-model))
+	  (.add (.daySpinner from-model))
+	  (.add (JLabel. "time:"))
+	  (.add (.hourSpinner from-model))
+	  (.add (.minuteSpinner from-model))
+	  (.add (.secondSpinner from-model)))
+
+	(doto to-panel
+	  (.setLayout (FlowLayout. FlowLayout/TRAILING ))
+	  (.add (JLabel. "To date:"))
+	  (.add (.yearSpinner to-model))
+	  (.add (.monthSpinner to-model))
+	  (.add (.daySpinner to-model))
+	  (.add (JLabel. "time:"))
+	  (.add (.hourSpinner to-model))
+	  (.add (.minuteSpinner to-model))
+	  (.add (.secondSpinner to-model)))
+	(.setLayout update-panel (FlowLayout. FlowLayout/TRAILING ))
+	  (.add update-panel (let [update (JButton. "Update")
+				   onUpdate (fn [] 
+					      (let [from (. from-model getDate)
+						    to (. to-model getDate)]
+						(let [names (get-names from to server)]
+						  (on-update names combomodels-on-center centerPanel add)
+						  (.pack dialog))))]
 		  (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
-		  update)))))
+		  update))))
     dialog))
 
 
@@ -296,6 +337,7 @@
      :chart chart
      :colors (color-cycle)
      :time-series time-series
+     :name "Monitor - Analysis Window"
      ;:right-series right-series
      }))
 

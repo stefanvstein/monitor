@@ -134,6 +134,7 @@
      :add-column (:add-column tbl-model)
      :remove-row (:remove-row tbl-model)
      :colors (color-cycle)
+     :name "Monitor - Runtime Window"
      }]
   (swap! runtimes #(conj % r)) 
   r)))

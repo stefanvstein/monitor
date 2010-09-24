@@ -1,8 +1,9 @@
 (ns monitor.commongui
-(:import (javax.swing.table AbstractTableModel))
-(:import (java.util Date))
-(:import (java.awt Color))
- (:import (java.awt.event ActionListener))
+  (:import (javax.swing.table AbstractTableModel))
+  (:import (java.util Date))
+  (:import (java.awt Color))
+  (:import (java.awt.event ActionListener))
+  (:import (monitor ServerInterface$Transform ServerInterface$Granularity))
 )
 
 
@@ -47,7 +48,7 @@
       (let [stringed-names (interleave 
 			    (map #(name (first %)) (partition 2 names)) 
 			    (map #(second %) (partition 2 names)))
-	    data (.rawData (server) from to (java.util.ArrayList. stringed-names))]
+	    data (.rawData (server) from to (java.util.ArrayList. stringed-names) ServerInterface$Transform/Raw ServerInterface$Granularity/Second)]
 	(reduce (fn [result a-data] 
 		  (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
 		{} data))
@@ -63,7 +64,7 @@
 						      (assoc a (name (key b)) (val b))) 
 						    {} i)))
 					  ) [] names)
-	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps))]
+	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps) ServerInterface$Transform/Raw)]
 	(reduce (fn [result a-data] 
 		  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (val a-data)))) 
 		{} data))

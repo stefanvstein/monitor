@@ -1,5 +1,5 @@
 (ns monitor.database
-  (:use [monitor db mem])
+  (:use [monitor db mem tools])
   (:use clojure.test)
   (:use clojure.contrib.logging)
   (:use cupboard.utils)
@@ -61,24 +61,6 @@
      (alter *live-data* remove-from-each-while (fn [#^Date i] (< (.getTime i) (.getTime timestamp))))
      (alter *live-data* dissoc empty-names @*live-data*))))
 
-(defn- day-by-day
-  [date]
-  (let [start (doto (. Calendar getInstance ) (.setTime date))
-	nextfn (fn nextfn [#^Calendar cal] 
-		  (lazy-seq 
-		   (cons (. cal getTime) 
-			 (nextfn (doto cal (.add java.util.Calendar/DATE 1))))))]
-    (nextfn start)))
-
-(defn- day-seq [lower upper]
-  (let [df (java.text.SimpleDateFormat. "yyyyMMdd")
-	day-after-upper (. (doto (. java.util.Calendar getInstance)
-			     (.setTime upper)
-			     (.add java.util.Calendar/DATE 1)) getTime)
-	day-after-upper-as-text (. df format day-after-upper)]
-    (take-while #(not 
-		  (= day-after-upper-as-text (. df format %))) 
-		(day-by-day lower))))
 
 
 (defn names-where 
@@ -105,22 +87,6 @@
 	   res)))))
 
 
-
-(defn- apply-for
-  ([a]
-     (for [at a] (list at)))
-  ([a & more]
-     (loop [first-time true
-	    results a 
-	    coming (first more)
-	    remaining (next more)]
-       (let [fored (for [r results c coming] 
-		     (if first-time 
-		       (list r c)
-		       (concat r (list c))))]
-	 (if remaining
-	   (recur false fored (first remaining) (next remaining))
-	   fored)))))
 
 
 (defn- data-by-unfiltered
