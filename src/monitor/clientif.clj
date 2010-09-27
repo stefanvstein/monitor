@@ -6,8 +6,11 @@
   (:import (java.net ServerSocket Socket InetAddress SocketTimeoutException))
   (:import (java.util HashMap TreeMap))
   (:use (clojure stacktrace test))
-  (:use (monitor database))
+  (:use [clojure.contrib import-static])
+  (:use (monitor database calculations))
   (:use cupboard.utils))
+
+(import-static java.util.Calendar YEAR MONTH DAY_OF_MONTH HOUR_OF_DAY MINUTE SECOND MILLISECOND)
 
 (defn- names-as-keyworded [names]
   (reduce (fn [result name]
@@ -20,7 +23,7 @@
 	  [] names)]
 (apply array-map result)))
 
-(defn raw-data [from to names]
+(defn raw-data [from to transform granularity names]
   (when (odd? (count names))
     (throw (IllegalArgumentException. "Odd number of names")))
   (let [keyed-names (interleave 
@@ -29,9 +32,49 @@
 	result (apply data-by from to keyed-names)
 	final-result (HashMap.)]
     (dorun (map (fn [row]
-		  (. final-result put (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map (val row))))
+		  (let [gran (condp = granularity
+				 ServerInterface$Granularity/SECOND SECOND
+				 ServerInterface$Granularity/MINUTE MINUTE
+				 ServerInterface$Granularity/HOUR HOUR
+				 ServerInterface$Granularity/DAY DAY)
+			calculated-values (condp = transform
+					      ServerInterface$Transform/RAW (val row)
+					      ServerInterface$Transform/AVERAGE_MINUTE 
+					      (into (sorted-map) (sliding-average (val row) 1 MINUTE gran))
+					      ServerInterface$Transform/AVERAGE_HOUR 
+					      (into (sorted-map) (sliding-average (val row) 1 HOUR gran))
+					      ServerInterface$Transform/AVERAGE_DAY 
+					      (into (sorted-map) (sliding-average (val row) 1 DAY gran))
+					      ServerInterface$Transform/MEAN_MINUTE
+					      (into (sorted-map) (sliding-mean (val row) 1 MINUTE gran))
+					      ServerInterface$Transform/MEAN_HOUR
+					      (into (sorted-map) (sliding-mean (val row) 1 HOUR gran))
+					      ServerInterface$Transform/MEAN_DAY
+					      (into (sorted-map) (sliding-mean (val row) 1 DAY gran))
+					      ServerInterface$Transform/MIN_MINUTE
+					      (into (sorted-map) (sliding-min (val row) 1 MINUTE gran))
+					      ServerInterface$Transform/MIN_HOUR
+					      (into (sorted-map) (sliding-min (val row) 1 HOUR gran))
+					      ServerInterface$Transform/MIN_DAY
+					      (into (sorted-map) (sliding-min (val row) 1 DAY gran))
+					      ServerInterface$Transform/MAX_MINUTE
+					      (into (sorted-map) (sliding-max (val row) 1 MINUTE gran))
+					      ServerInterface$Transform/MAX_HOUR
+					      (into (sorted-map) (sliding-max (val row) 1 HOUR gran))
+					      ServerInterface$Transform/MAX_DAY
+					      (into (sorted-map) (sliding-max (val row) 1 DAY gran))
+					      ServerInterface$Transform/PER_SECOND
+					      (into (sorted-map) (sliding-per- (val row) gran SECOND))
+					      ServerInterface$Transform/PER_MINUTE
+					      (into (sorted-map) (sliding-per- (val row) gran MINUTE))
+					      ServerInterface$Transform/PER_HOUR
+					      (into (sorted-map) (sliding-per- (val row) gran HOUR))
+					      ServerInterface$Transform/PER_DAY
+					      (into (sorted-map) (sliding-per- (val row) gran DAY))
+					      (throw (IllegalArgumentException. (str transform " not yet implemented"))))]
+		    (. final-result put (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map calculated-values))))
 	
-	    result))
+		result))
     final-result))
 
 
@@ -70,7 +113,7 @@
 (def exported (proxy [ServerInterface] []
 		(rawData [from# to# names# transform# granularity#]
 			 (println "Raw data for " from# " to " to#)
-			 (raw-data from# to# names#))
+			 (raw-data from# to# transform# granularity# names#))
 		(rawLiveData [ i# transform#] 
 			     (raw-live-data i#))
 		(rawLiveNames []
@@ -141,7 +184,9 @@
 			       {"host" "Bengt" "counter" "Olle"}}))
      (is (empty? 
 	  (raw-data (dparse "20070101 010101") 
-		    (dparse "20080101 010101") 
+		    (dparse "20080101 010101")
+		    ServerInterface$Transform/RAW
+		    ServerInterface$Granularity/SECOND
 		    ["host" "Arne" "counter" "Nisse"]))))))
 
 (deftest test-raw-persistent
@@ -175,13 +220,25 @@
 				   (dparse "20100101 000000") 
 				   (dparse "20100101 100004")
 				   (java.util.ArrayList. ["host" "Arne"])
-				   ServerInterface$Transform/Raw
-				   ServerInterface$Granularity/Second)
+				   ServerInterface$Transform/RAW
+				   ServerInterface$Granularity/SECOND)
 				  
 				{ {"host" "Arne" "counter" "Nisse"}
 				 {(dparse "20100101 100001") 1.0  (dparse "20100101 100003") 3.0}
 				 {"host" "Arne" "counter" "Olle"} 
-				  {(dparse "20100101 100002") 2.0}}))))))
+				 {(dparse "20100101 100002") 2.0}}))
+			 (println (. server rawData
+				     (dparse "20100101 000000") 
+				   (dparse "20100101 100006")
+				   (java.util.ArrayList. ["host" "Arne"])
+				   ServerInterface$Transform/RAW
+				   ServerInterface$Granularity/SECOND))
+			 (println (. server rawData
+				     (dparse "20100101 000000") 
+				   (dparse "20100101 100006")
+				   (java.util.ArrayList. ["host" "Arne"])
+				   ServerInterface$Transform/AVERAGE_MINUTE
+				   ServerInterface$Granularity/MINUTE))))))
      
      (finally (rmdir-recursive tmp)
 	      (swap! stop-signal (fn [_] true))

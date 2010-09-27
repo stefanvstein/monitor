@@ -73,17 +73,20 @@
 )
 
 			
-(defn on-add-to-analysis [from to name-values graph colors chart add-to-table add-column server]
+(defn on-add-to-analysis [from to name-values func-string granularity-string graph colors chart add-to-table add-column server]
 					;  (.start (Thread.
 
 	   (future  
-
+	     
 	     (let [result (reduce (fn [c e]
-					     (merge c (get-data (first e)
-								(second e)
-								name-values server)))
-					   {}
-					   (full-days-between from to))]
+				    (merge c (get-data (first e)
+						       (second e)
+						       name-values
+						       func-string
+						       granularity-string
+						       server)))
+				  {}
+				  (full-days-between from to))]
 		      (SwingUtilities/invokeLater 
 		       (fn [] 
 			 (.setNotify chart false)
@@ -113,7 +116,12 @@
 						 serie))]
 					 (let [data-from-serie (time-serie-to-sortedmap time-serie)
 					       data-with-new-data (merge data-from-serie (val data))
-					       data-with-nans (with-nans data-with-new-data)
+					       nan-distance (condp = granularity-string
+								"All Data" (* 30 1000)
+							      "Minute" (* 2 60 1000)
+							      "Hour" (* 2 60 60 1000)
+							      "Day" (* 2 24 60 60 1000))
+					       data-with-nans (with-nans data-with-new-data nan-distance)
 					       temp-serie (doto (TimeSeries. "") (.setNotify false))
 					       new-serie (reduce (fn [r i]
 								   (.add r  (TimeSeriesDataItem. 
@@ -153,6 +161,16 @@
 					 (.add Calendar/YEAR +1)))]
 		     (SplitDateSpinners. d endd startd ))		
 
+	func-combo (JComboBox. (to-array ["Raw" "Average/Minute" "Average/Hour" "Average/Day"
+						     "Mean/Minute" "Mean/Hour" "Mean/Day"
+						     "Min/Minute" "Min/Hour" "Min/Day"
+						     "Max/Minute" "Max/Hour" "Max/Day"
+						     "Change/Second"
+						     "Change/Minute"
+						     "Change/Hour"]))
+	
+
+	granularity-combo (JComboBox. (to-array ["All Data" "Minute" "Hour" "Day"]))
 	combomodels-on-center (atom {})
 
 	onAdd (fn []
@@ -165,6 +183,8 @@
 		(on-add-to-analysis (.getDate from-model)
 				    (.getDate to-model)
 				    name-values
+				    (.getSelectedItem func-combo)
+				    (.getSelectedItem granularity-combo)
 				    (:time-series contents)
 				    (:colors contents)
 				    (:chart contents)
@@ -187,9 +207,11 @@
     (let [contentPane (.getContentPane dialog)]
       (. contentPane add centerPanel BorderLayout/CENTER)
       (. contentPane add (doto (JPanel.)
-			     (.setLayout (FlowLayout. FlowLayout/CENTER))
-			     (.add add)
-			     (.add close)) 
+			   (.setLayout (FlowLayout. FlowLayout/CENTER))
+			   (.add func-combo)
+			   (.add granularity-combo)
+			   (.add add)
+			   (.add close)) 
 	   BorderLayout/SOUTH)
 
 

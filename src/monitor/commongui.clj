@@ -43,13 +43,35 @@
 	       (sorted-map) names))))
 
 (defn get-data 
-  ([from to names server]
+  ([from to names func-string granularity-string server]
      (try
-      (let [stringed-names (interleave 
+       (let [func (condp = func-string
+		      "Raw" ServerInterface$Transform/RAW
+		      "Average/Minute" ServerInterface$Transform/AVERAGE_MINUTE
+		      "Average/Hour" ServerInterface$Transform/AVERAGE_HOUR
+		      "Average/Day" ServerInterface$Transform/AVERAGE_DAY
+		      "Mean/Minute" ServerInterface$Transform/MEAN_MINUTE
+		      "Mean/Hour" ServerInterface$Transform/MEAN_HOUR
+		      "Mean/Day" ServerInterface$Transform/MEAN_DAY
+		      "Min/Minute" ServerInterface$Transform/MIN_MINUTE
+		      "Min/Hour" ServerInterface$Transform/MIN_HOUR
+		      "Min/Day" ServerInterface$Transform/MIN_DAY
+		      "Max/Minute" ServerInterface$Transform/MAX_MINUTE
+		      "Max/Hour" ServerInterface$Transform/MAX_HOUR
+		      "Max/Day" ServerInterface$Transform/MAX_DAY
+		      "Change/Second" ServerInterface$Transform/PER_SECOND
+		      "Change/Minute" ServerInterface$Transform/PER_MINUTE
+		      "Change/Hour" ServerInterface$Transform/PER_HOUR)
+	     granularity (condp = granularity-string
+			     "All Data" ServerInterface$Granularity/SECOND
+			     "Minute" ServerInterface$Granularity/MINUTE
+			     "Hour" ServerInterface$Granularity/HOUR
+			     "Day" ServerInterface$Granularity/DAY)
+	     stringed-names (interleave 
 			    (map #(name (first %)) (partition 2 names)) 
 			    (map #(second %) (partition 2 names)))
-	    data (.rawData (server) from to (java.util.ArrayList. stringed-names) ServerInterface$Transform/Raw ServerInterface$Granularity/Second)]
-	(reduce (fn [result a-data] 
+	     data (.rawData (server) from to (java.util.ArrayList. stringed-names) func granularity)]
+	 (reduce (fn [result a-data] 
 		  (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
 		{} data))
      (catch Exception e (println e)
@@ -64,7 +86,7 @@
 						      (assoc a (name (key b)) (val b))) 
 						    {} i)))
 					  ) [] names)
-	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps) ServerInterface$Transform/Raw)]
+	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps) ServerInterface$Transform/RAW)]
 	(reduce (fn [result a-data] 
 		  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (val a-data)))) 
 		{} data))
@@ -158,7 +180,7 @@
     action
 ))
 
-(defn with-nans [data]
+(defn with-nans [data distance-in-millis]
   (let [without-nans  #(reduce (fn [r i]
 				(if (.isNaN (val i))
 				  r
@@ -167,7 +189,7 @@
 	last-milli (atom 1)
 	with-nans #(reduce (fn [r i]
 			     (let [currentMilli (.getTime (key i))]
-			       (if (< 30000 (- currentMilli @last-milli))
+			       (if (< distance-in-millis (- currentMilli @last-milli))
 				 (do
 				   (swap! last-milli (fn [_] currentMilli))
 				   (assoc r (Date. (- currentMilli 1)) (Double/NaN) (Date. currentMilli) (val i)))
