@@ -91,7 +91,7 @@
 
 (defn- data-by-unfiltered
 ([#^Date lower #^Date upper & name-spec]
- {:pre [(= java.util.Date (class lower) (class upper))]}
+   {:pre [(= java.util.Date (class lower) (class upper))]}
   (if (> (. lower getTime) (. upper getTime))
     nil
     (let [spec-map (reduce #(assoc %1 
@@ -101,49 +101,31 @@
 				(list (list (first %2) (second %2)))))
 			   {} 
 			   (partition 2 name-spec))
-	  ;{:b ((:b "Beril")), :a ((:a "Nisse") (:a "adam"))}
-;	  df (java.text.SimpleDateFormat. date-format)
-	;  combinations (apply apply-for (map #(list :date (. df format %)) 
-	;				     (day-seq lower upper)) 
-	;		      (vals spec-map)) 
+	  lower-long (.getTime lower)
+	  upper-long (.getTime upper)
 	  combinations (apply apply-for (day-seq lower upper) (vals spec-map)) 
-;	 (((:date "20071121") (:b "Beril") (:a "Nisse")) 
-;	  ((:date "20071121") (:b "Beril") (:a "adam"))
-;	  ((:date "20071122") (:b "Beril") (:a "Nisse"))
-;	  ((:date "20071122") (:b "Beril") (:a "adam"))
-;	  ((:date "20071123") (:b "Beril") (:a "Nisse")) 
-;	  ((:date "20071123") (:b "Beril") (:a "adam")))
-
-;	  combinations-vectors (map (fn [row] 
-;				      (reduce #(conj %1 (first %2) (second %2)) 
-;					      [] 
-;					      row)) 
-;				    combinations)
 	  combinations-vectors (map (fn [row] 
 				      (into [(first row)] 
 					    (reduce #(conj %1 (first %2) (second %2)) 
 						    [] 
 						    (rest row)))) 
-				    combinations)
-
-;	 ([:date "20071121" :b "Beril" :a "Nisse"] 
-; 	  [:date "20071121" :b "Beril" :a "adam"] 
-;	  [:date "20071122" :b "Beril" :a "Nisse"] 
-;	  [:date "20071122" :b "Beril" :a "adam"] 
-;	  [:date "20071123" :b "Beril" :a "Nisse"] 
-;	  [:date "20071123" :b "Beril" :a "adam"])
-	  ]
+				    combinations) ]
 
      (reduce (fn [result names-and-data-for-a-day]
 	       (if-let [data-added 
 			(apply 
 			 get-from-db (fn [data-seq] 
 					(reduce (fn [d h]
-;						  (println "->" h)
-						  (add d 
-						      (first h) 
-						      (first(next h)) 
-						      (first(nnext h)))) 
+						  (let [timestamp (first (next h))
+							timestamp-long (.getTime timestamp)]
+						    
+						    (if (and (> timestamp-long lower-long)
+							     (< timestamp-long upper-long))
+						      (add d 
+							   (first h) 
+							   timestamp 
+							   (first(nnext h)))
+						      d))) 
 						result
 						data-seq))
 			 (day-as-int (first names-and-data-for-a-day))
@@ -155,8 +137,8 @@
 
 (defn data-by 
   ([#^Date lower #^Date upper & name-spec]
-  {:pre [(= java.util.Date (class lower) (class upper))]}
-
+     {:pre [(= java.util.Date (class lower) (class upper))]}
+     
   
   (when-not (nil? @*db-env*)
     (if (> (. lower getTime) (. upper getTime))
@@ -401,7 +383,22 @@
 					  :host "Arne" :host "Lennart" :sladd "Olle")]
 		      (is (= 1 (count result)) "Only one with sladd")
 		      (is (= {:host "Arne" :category "Nisse" :sladd "Olle"}  (key (first result))))))
-     (finally (rmdir-recursive tmp))))))
+     (finally (rmdir-recursive tmp)))
+    (try
+      
+      (using-history tmp
+		     (add-data {:host "Arne" :category "Nisse"} (dparse "20010101 080000") 3)
+		     (add-data {:host "Arne" :category "Nisse"} (dparse "20010101 080001") 4)
+		     (add-data {:host "Arne" :category "Nisse"} (dparse "20010101 080003") 7)
+		     (add-data {:host "Arne" :category "Olle"} (dparse "20010101 080300") 30)
+		     (add-data {:host "Arne" :category "Olle"} (dparse "20010101 080304") 37)
+		     (add-data {:host "Arne" :category "Olle"} (dparse "20010101 080305") 42)
+		     (let [result (data-by (dparse "20010101 080305") (dparse "20010101 080305")
+					   :host "Arne")]
+			   (println "Result" result))
+		     )
+      
+      (finally (rmdir-recursive tmp))))))
 
 (deftest test-nothing-bound
   (binding [*live-data* (ref nil)]

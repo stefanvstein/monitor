@@ -222,6 +222,7 @@
 	add-button (let [add (JButton. "Add")]
 		     (.setEnabled add false)
 		     add)
+	func-combo (JComboBox. (to-array ["Raw" "Averge" "Mean" "Change/Second" "Change/Minute" "Change/Hour"]))
 	close-button (JButton. "Close")
 	centerPanel (JPanel.)
 	combomodels-on-center (atom {})
@@ -248,6 +249,7 @@
       (. contentPane add centerPanel BorderLayout/CENTER)
       (. contentPane add (doto (JPanel.)
 			   (.setLayout (FlowLayout. FlowLayout/CENTER))
+			   (.add func-combo)
 			   (.add add-button)
 			   (.add close-button)) 
 	 BorderLayout/SOUTH))

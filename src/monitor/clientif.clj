@@ -78,16 +78,32 @@
     final-result))
 
 
-(defn raw-live-data [names]
+(defn raw-live-data [names transform]
   (let [keyworded-names (reduce (fn [r i] (conj r (names-as-keyworded i))) [] names)
 	result (reduce (fn [r i] (merge r (data-by (fn [a-name] 
 			 (every? (fn [requirement] 
 				   (= ((key requirement) a-name) 
 				      (val requirement))) 
 				 i))))) {} keyworded-names)
-		final-result (HashMap.)] 
+	final-result (HashMap.)
+	calculated-values (condp = transform
+			      ServerInterface$Transform/RAW (val row)
+			      ServerInterface$Transform/AVERAGE_MINUTE
+			      (into (sorted-map) (sliding-average (val row) 1 MINUTE MINUTE))
+			      ServerInterface$Transform/MEAN_MINUTE
+			      (into (sorted-map) (sliding-mean (val row) 1 MINUTE MINUTE))
+			      ServerInterface$Transform/PER_SECOND
+			      (into (sorted-map) (sliding-per- (val row) MINUTE SECOND))
+			      ServerInterface$Transform/PER_MINUTE
+			      (into (sorted-map) (sliding-per- (val row) MINUTE MINUTE))
+			      ServerInterface$Transform/PER_HOUR
+			      (into (sorted-map) (sliding-per- (val row) MINUTE HOUR))
+			      ServerInterface$Transform/PER_DAY
+			      (into (sorted-map) (sliding-per- (val row) MINUTE DAY))
+			      (throw (IllegalArgumentException. (str transform " not yet implemented"))))]
+    
     (dorun (map (fn [row]
-		  (. final-result put (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map (val row))))
+		  (. final-result put (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map calculated-values)))
 		result))
     final-result))
 
@@ -112,10 +128,10 @@
 (def remote (atom nil))
 (def exported (proxy [ServerInterface] []
 		(rawData [from# to# names# transform# granularity#]
-			 (println "Raw data for " from# " to " to#)
+			 ;(println "Raw data for " from# " to " to#)
 			 (raw-data from# to# transform# granularity# names#))
 		(rawLiveData [ i# transform#] 
-			     (raw-live-data i#))
+			     (raw-live-data i# transform#))
 		(rawLiveNames []
 			      (raw-live-names))
 		(rawNames [from# to#]

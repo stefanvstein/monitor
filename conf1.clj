@@ -40,6 +40,6 @@
 							    (catch InterruptedException _))
 						       (clean-stored-data-older-than 
 							(java.util.Date. (- (System/currentTimeMillis) 
-									    (* 4 1000 60 60))))))
+									    (* 4 24 1000 60 60))))))
 
 					 ]))))))

@@ -73,20 +73,39 @@
 )
 
 			
-(defn on-add-to-analysis [from to name-values func-string granularity-string graph colors chart add-to-table add-column server]
+(defn on-add-to-analysis [from to name-values all-names func-string granularity-string graph colors chart add-to-table add-column server]
 					;  (.start (Thread.
 
 	   (future  
 	     
-	     (let [result (reduce (fn [c e]
-				    (merge c (get-data (first e)
-						       (second e)
-						       name-values
-						       func-string
-						       granularity-string
-						       server)))
-				  {}
-				  (full-days-between from to))]
+	     (let [result (if (= "Raw" func-string)
+			    (reduce (fn [c e]
+				      (merge c (get-data (first e)
+							 (second e)
+							 name-values
+							 func-string
+							 granularity-string
+							 server)))
+				    {}
+				    (full-days-between from to))
+			    (let [names-of-interest (let [sel-as-map (apply assoc {} name-values)]
+						      (reduce (fn [c a] 
+								(let [s (select-keys a (keys sel-as-map))]
+								  (if (= s sel-as-map)
+								    (conj c a)
+								    c)))
+							      [] all-names))]
+			      (reduce (fn [c e]
+					(merge c (get-data from
+							   to
+							   (reduce (fn [v e]
+								     (conj v (key e) (val e))) [] e)
+							   func-string
+							   granularity-string
+							   server)))
+				      {}
+				      names-of-interest)))]
+
 		      (SwingUtilities/invokeLater 
 		       (fn [] 
 			 (.setNotify chart false)
@@ -169,6 +188,7 @@
 						     "Change/Second"
 						     "Change/Minute"
 						     "Change/Hour"]))
+	all-names (atom [])
 	
 
 	granularity-combo (JComboBox. (to-array ["All Data" "Minute" "Hour" "Day"]))
@@ -184,6 +204,7 @@
 		(on-add-to-analysis (.getDate from-model)
 				    (.getDate to-model)
 				    name-values
+				    @all-names
 				    (.getSelectedItem func-combo)
 				    (.getSelectedItem granularity-combo)
 				    (:time-series contents)
@@ -253,6 +274,13 @@
 					      (let [from (. from-model getDate)
 						    to (. to-model getDate)]
 						(let [names (get-names from to server)]
+						  (swap! all-names (fn [_]
+								     (reduce (fn [r e]
+					;e är lista
+									       (reduce (fn [r e]
+											 (conj r e)) r e)
+									       ) #{} (vals names)) 
+								     ))
 						  (on-update names combomodels-on-center centerPanel add)
 						  (.pack dialog))))]
 		  (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
