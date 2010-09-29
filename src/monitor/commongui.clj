@@ -76,9 +76,17 @@
 		{} data))
      (catch Exception e (println e)
 	    {})))
-  ([names server]
+  ([names func-string  server]
      (try
-      (let [stringed-names-in-hashmaps (reduce 
+       (let [func (condp = func-string
+		      "Raw" ServerInterface$Transform/RAW
+		      "Average" ServerInterface$Transform/AVERAGE_MINUTE
+		      "Mean" ServerInterface$Transform/MEAN_MINUTE
+		      "Change/Second" ServerInterface$Transform/PER_SECOND
+		      "Change/Minute" ServerInterface$Transform/PER_MINUTE
+		      "Change/Hour" ServerInterface$Transform/PER_HOUR)
+	     
+	     stringed-names-in-hashmaps (reduce 
 					(fn [r i]
 					  (conj r (java.util.HashMap. 
 						   (reduce 
@@ -86,7 +94,7 @@
 						      (assoc a (name (key b)) (val b))) 
 						    {} i)))
 					  ) [] names)
-	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps) ServerInterface$Transform/RAW)]
+	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps) func)]
 	(reduce (fn [result a-data] 
 		  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (val a-data)))) 
 		{} data))

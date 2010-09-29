@@ -86,24 +86,25 @@
 				      (val requirement))) 
 				 i))))) {} keyworded-names)
 	final-result (HashMap.)
-	calculated-values (condp = transform
-			      ServerInterface$Transform/RAW (val row)
-			      ServerInterface$Transform/AVERAGE_MINUTE
-			      (into (sorted-map) (sliding-average (val row) 1 MINUTE MINUTE))
-			      ServerInterface$Transform/MEAN_MINUTE
-			      (into (sorted-map) (sliding-mean (val row) 1 MINUTE MINUTE))
-			      ServerInterface$Transform/PER_SECOND
-			      (into (sorted-map) (sliding-per- (val row) MINUTE SECOND))
-			      ServerInterface$Transform/PER_MINUTE
-			      (into (sorted-map) (sliding-per- (val row) MINUTE MINUTE))
-			      ServerInterface$Transform/PER_HOUR
-			      (into (sorted-map) (sliding-per- (val row) MINUTE HOUR))
-			      ServerInterface$Transform/PER_DAY
-			      (into (sorted-map) (sliding-per- (val row) MINUTE DAY))
-			      (throw (IllegalArgumentException. (str transform " not yet implemented"))))]
+]
     
     (dorun (map (fn [row]
-		  (. final-result put (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map calculated-values)))
+		  (let [calculated-values (condp = transform
+					      ServerInterface$Transform/RAW (val row)
+					      ServerInterface$Transform/AVERAGE_MINUTE
+					      (into (sorted-map) (sliding-average (val row) 1 MINUTE MINUTE))
+					      ServerInterface$Transform/MEAN_MINUTE
+					      (into (sorted-map) (sliding-mean (val row) 1 MINUTE MINUTE))
+					      ServerInterface$Transform/PER_SECOND
+					      (into (sorted-map) (sliding-per- (val row) MINUTE SECOND))
+					      ServerInterface$Transform/PER_MINUTE
+					      (into (sorted-map) (sliding-per- (val row) MINUTE MINUTE))
+					      ServerInterface$Transform/PER_HOUR
+					      (into (sorted-map) (sliding-per- (val row) MINUTE HOUR))
+					      ServerInterface$Transform/PER_DAY
+					      (into (sorted-map) (sliding-per- (val row) MINUTE DAY))
+					      (throw (IllegalArgumentException. (str transform " not yet implemented"))))]
+		    (. final-result put (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map calculated-values))))
 		result))
     final-result))
 

@@ -17,6 +17,32 @@
   (:import (info.monitorenter.gui.chart.axis AxisLinear))
   (:import (info.monitorenter.gui.chart.traces.painters TracePainterLine TracePainterDisc))
 )
+(def types ["Raw" "Average" "Mean" "Change/Second" "Change/Minute" "Change/Hour"])
+(defn- with-type-added [type data]
+  (if (map? data)
+   (reduce (fn [r e]
+	     (assoc r (assoc (key e) :type type) (val e)))
+	   {} data)
+   (reduce (fn [r e]
+	     (conj r (assoc e :type type))) [] data)))
+
+(defn with-type [type data]
+  (if (map? data)
+    (into {} (filter (fn [e]
+		       (= type (:type (key e))))
+		     data))
+    (filter (fn [e] (= type (:type e))) data)))
+    
+
+(defn- without-type [data]
+  (if (map? data)
+    (reduce (fn [r e]
+	      (assoc r (dissoc (key e) :type) (val e)))
+	    {} data)
+   
+	(reduce (fn [r e]
+		  (conj r (dissoc e :type))) [] data))) 
+    
 
 (def runtimes (atom #{}))
 
@@ -140,7 +166,7 @@
   r)))
 
 (def all-runtime-data (atom {}))
-(def all-runtime-names (atom #{}))
+(def all-raw-names (atom #{}))
 (def runtime-names-of-interest (atom #{}))
 
 
@@ -172,18 +198,7 @@
 	new-trace-row #(let [color ((:colors contents))
 			     trace  (doto (Trace2DLtdReplacing. 1000)
 				    
-;				      (.setTracePainter (proxy [TracePainterLine] [] 
-;							  ( paintPoint [absoluteX, absoluteY, nextX, nextY, g,  original]
-;								       (try
-;									(if-let [prev (proxy-super getPreviousPoint)]
-;									  (if (or (.isNaN (.getY original)) (.isNaN (.getY prev)))
-;									    (let [c (.getColor g)]
-;									      (.setColor g (Color. 255,0,0,0))
-;									      (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original)
-;									      (.setColor g c))
-;									    (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original))
-;									  (proxy-super paintPoint absoluteX, absoluteY, nextX, nextY, g,  original))
-;									(catch Exception e (println e))))))
+
 				    
 				      ) 
 			     row (do ((:add-to-table contents) %1 color %2)
@@ -222,7 +237,7 @@
 	add-button (let [add (JButton. "Add")]
 		     (.setEnabled add false)
 		     add)
-	func-combo (JComboBox. (to-array ["Raw" "Averge" "Mean" "Change/Second" "Change/Minute" "Change/Hour"]))
+	func-combo (JComboBox. (to-array types))
 	close-button (JButton. "Close")
 	centerPanel (JPanel.)
 	combomodels-on-center (atom {})
@@ -233,9 +248,10 @@
 						(assoc result (key name-combomodel) the-value)
 						result)))
 					  {}  @combomodels-on-center)]
-			  (let [data (get-data [name-values] server)]
+			  (let [func  (.getSelectedItem func-combo)
+				data (with-type-added func (get-data [name-values] func server))]
 			    (swap! (:watched-names contents) (fn [current] (apply conj current (keys data))))
-			    (swap! all-runtime-names (fn [current] (apply conj current (keys data))))
+			    (swap! all-raw-names (fn [current] (apply conj current (keys data))))
 			    (swap! all-runtime-data (fn [all] (merge all data)))
 			    (update-table-and-graphs contents)
 			    )))]
@@ -302,7 +318,7 @@
 (defn update-runtime-data []
   (swap! runtime-names-of-interest (fn [_] #{}))
   (dorun (map #(update-table-and-graphs %) @runtimes))
-  (swap! all-runtime-names (fn [current]
+  (swap! all-raw-names (fn [current]
 			     (reduce (fn [r i]
 				       (conj r i)) 
 				     #{}
@@ -310,10 +326,12 @@
 
 
 (defn get-new-data [server]
-  (let [data (get-data @all-runtime-names server)]
+  (let [
+	data (reduce (fn [r type]
+		      (merge r (with-type-added type (get-data (without-type (with-type type @all-raw-names)) type server)))) {} types)]
     (if (not (empty? data))
       (do
-	(swap! all-runtime-names (fn [current] (apply conj current (keys data))))
+	(swap! all-raw-names (fn [current] (apply conj current (keys data))))
 	(swap! all-runtime-data (fn [all] (merge all data)))
 	(SwingUtilities/invokeAndWait update-runtime-data))
       ;(println "There is no data")
