@@ -111,7 +111,8 @@
 			 (.setNotify chart false)
 			 (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries)))
 			 (dorun (map (fn [data]
-				       (let [identifier (str func-string granularity-string (key data))
+				       (let [data-key (assoc (key data) :type func-string :granularity granularity-string)
+					     identifier (str data-key)
 					     time-serie 
 					     (if-let 
 						 [serie 
@@ -131,8 +132,8 @@
 						       1) 
 						      color))
 						 
-						 (add-to-table (key data) color identifier)
-						 (dorun (map (fn [i] (add-column i)) (keys (key data)))) 
+						 (add-to-table data-key color identifier)
+						 (dorun (map (fn [i] (add-column i)) (keys data-key))) 
 						 serie))]
 					 (let [data-from-serie (time-serie-to-sortedmap time-serie)
 					       data-with-new-data (merge data-from-serie (val data))
