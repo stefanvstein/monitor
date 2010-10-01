@@ -1,8 +1,9 @@
 (ns monitor.main
   (:gen-class)
-  (:use (monitor gui)))
+  (:use (monitor gui logger)))
  
 (defn -main [& line]
+  (using-logger
   (when (not (= "true" (System/getProperty "stayalive")))
     (reset! exit-on-shutdown true))
   (if (not (empty? line))
@@ -15,4 +16,4 @@
 	     
 	  (do (load (str "/" filename)))
 	  (load "/conf1"))))
-      (new-window true)))
+      (new-window true))))

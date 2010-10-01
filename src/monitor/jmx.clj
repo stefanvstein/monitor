@@ -39,7 +39,7 @@
      (catch Exception e 
        (info (str "Could not connect to MBeanServer at " 
 		  (:host mbean-connector) ":" (:port mbean-connector) "." 
-		  (.getMessage e)))
+		  ))
        nil))))
 
 
@@ -173,38 +173,42 @@
 (defmacro using-jmx
   [host port & form]
   `(let [con# (create-mbean-connector ~host ~port)
-	opened# (open-mbean-connector con#)]
-    (try
-     (binding [*current-mbean-connection* opened#]
-       ~@form)
-     (finally (close-mbean-connection opened#)))))
+	 opened# (open-mbean-connector con#)]
+     (if opened#
+       (try
+	 (binding [*current-mbean-connection* opened#]
+	   ~@form)
+	 (finally (close-mbean-connection opened#))))))
 
 (defmacro using-named-jmx
   [host port name & form]
   `(let [con# (create-mbean-connector ~host ~port ~name)
-	opened# (open-mbean-connector con#)]
+	 opened# (open-mbean-connector con#)]
+     (if opened#
     (try
      (binding [*current-mbean-connection* opened#]
        ~@form)
-     (finally (close-mbean-connection opened#)))))
+     (finally (close-mbean-connection opened#))))))
 
 (defmacro using-named-jmx-port
   [port name & form]
   `(let [con# (create-mbean-connector ~port ~name)
-	opened# (open-mbean-connector con#)]
+	 opened# (open-mbean-connector con#)]
+     (if opened#
     (try
      (binding [*current-mbean-connection* opened#]
        ~@form)
-     (finally (close-mbean-connection opened#)))))
+     (finally (close-mbean-connection opened#))))))
 
 (defmacro using-jmx-port
   [port & form]
   `(let [con# (create-mbean-connector ~port)
-	opened# (open-mbean-connector con#)]
+	 opened# (open-mbean-connector con#)]
+     (if opened#
     (try
      (binding [*current-mbean-connection* opened#]
        ~@form)
-     (finally (close-mbean-connection opened#)))))
+     (finally (close-mbean-connection opened#))))))
 
 
 

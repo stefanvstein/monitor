@@ -1,10 +1,12 @@
 (ns monitor.logger
   (:import (java.util.logging Logger SimpleFormatter ConsoleHandler Formatter Level))
-  (:use (clojure stacktrace)))
+  (:use (clojure stacktrace test))
+  (:use [clojure.contrib.logging :only (error info)] )
+  )
 
 (defmacro using-logger
   [& form]
-  `(let [logger# (Logger/getLogger "se.sj.monitor")
+  `(let [logger# (Logger/getLogger "monitor")
 	 handler# (let [ han# (ConsoleHandler.)
 			lastHead# (atom "")]
 			(. han# setFormatter 
@@ -39,3 +41,9 @@
 	  (try
 	   (do ~@form)
 	  (finally (. logger# removeHandler handler#)))))
+
+(deftest try-some-logging
+    (using-logger
+     (info "I am the myth")
+    (info "Ooops... This is thrown by intention" (IllegalStateException. "This is it"))
+    ))

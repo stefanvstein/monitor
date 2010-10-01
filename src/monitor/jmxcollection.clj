@@ -120,7 +120,10 @@
 							    "LastGcInfo"])))]
 	      (reduce (fn [re aval]
 			(let [r (aval attributeList)]
-			(apply assoc re r))) 
+
+			  (if r
+			    (apply assoc re r)
+			    re))) 
 		      result (val a-key)))) 
 	  {} collector-keys))
 

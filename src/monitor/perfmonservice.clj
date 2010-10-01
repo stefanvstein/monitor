@@ -58,7 +58,7 @@
        (error (str "Unknown host " adress))
 	true (throw e)))))
  ([adress port stop-signal hosts-exp categories-exp counters-exp instances-exp]
-  #(try
+    #(try
     (with-open [socket (Socket. adress port)
 		output (PrintWriter. (. socket getOutputStream) true)
 		input (. socket getInputStream)]
