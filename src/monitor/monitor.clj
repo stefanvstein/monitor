@@ -1,5 +1,5 @@
 (ns monitor.monitor
-  (:use (monitor database jmxcollection server clientif logger))
+  (:use (monitor database jmxcollection server clientif logger linuxproc))
   (:use [monitor.perfmonservice :only (perfmon-connection)]))
 
 (defn- sleepSeconds [interval]
@@ -22,6 +22,9 @@
      (dosync (alter tasks-to-start conj (perfmon-connection host port (fn []  @stop-signal) ".*" categories-expression counters-expression instances-expression))))
   ([host port counters-expression instances-expression]
      (dosync (alter tasks-to-start conj (perfmon-connection host port (fn []  @stop-signal) ".*" ".*" counters-expression instances-expression)))))
+
+(defn linux-proc [host port]
+  (dosync (alter tasks-to-start conj #(process-remote-linux-proc host port (fn [] @stop-signal)))))
 
 (defn in-env [ live-minutes history-days history-directory client-port]
    (using-live

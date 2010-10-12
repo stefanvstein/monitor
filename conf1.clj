@@ -10,6 +10,7 @@
 	 ".*User Time|.*Interrupt Time|.*Processor Time|.*Idle Time|Interrupts/sec|Context Switches/sec|Available Bytes|Current Disk Queue Length|Output Queue Length"
 	 ".*")
 (java6-jmx "Java2D" "localhost" 3031)
+(linux-proc "localhost" 4041)
 (in-env 60 10 "/home/stefan/testdb" 3030)
 
 
