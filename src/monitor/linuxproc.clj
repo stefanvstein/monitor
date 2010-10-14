@@ -336,7 +336,7 @@
      (try 
        (process-remote-linux-proc (java.net.Socket. host port) stop)
        (catch java.net.ConnectException e
-	 (info (str "Nobody is listening on " host "port" port))))))
+	 (info (str "Nobody is listening on " host " port " port))))))
   
 (deftest test-path
   (is (= {["f"] 4, ["a" "e"] 3, ["a" "b" "d"] 2, ["a" "b" "c"] 1}

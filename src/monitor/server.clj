@@ -1,29 +1,27 @@
 (ns monitor.server
+  (:use [monitor termination])
   (:use [clojure.test :only [is deftest]])
   (:use [clojure.stacktrace :only [root-cause]])
-  (:require [clojure.contrib.logging :only [info]])
-  (:import [java.util.concurrent Executors ExecutorCompletionService TimeUnit]) 
-)
+  (:use [clojure.contrib.logging :only [info error]])
+  (:import [java.util.concurrent Executors ExecutorCompletionService TimeUnit])
+ )
 
-(defn info 
-  ([message]
-     (clojure.contrib.logging/info message))
-  ([message exception]
-     (clojure.contrib.logging/info message exception)))
-(defn error
-  ([message]
-     (clojure.contrib.logging/error message))
-  ([message exception]
-     (clojure.contrib.logging/error message exception)))
+;(defn info 
+;  ([message]
+;     (clojure.contrib.logging/info message))
+;  ([message exception]
+;     (clojure.contrib.logging/info message exception)))
+;(defn error
+;  ([message]
+;     (clojure.contrib.logging/error message))
+;  ([message exception]
+;     (clojure.contrib.logging/error message exception)))
 
 (def current-server (atom nil))
 
-(def stop-signal (atom false))
+;(def stop-signal (atom false))
 
-(defn stop []
-  (swap! stop-signal ( fn [_] true))
-  (when-let [current  @current-server]
-    (.interrupt current)))
+
 
 (def running-tasks (ref {}))
 
@@ -36,7 +34,7 @@
 	      (iterate #(when % (. % getCause)) 
 		       e)))
 (defonce serve-call-count (atom 0))
-(def *serve-options* {:seconds-until-interrupt 10
+(def *serve-options* {:seconds-until-interrupt 30
 		      :seconds-after-interrupt 10
 		      :restart-pause 60})
 (defn serve 
@@ -45,7 +43,7 @@
    (let [thread-count (atom 0)]
    (when @current-server
      (throw (IllegalStateException. (str (. @current-server getName) " is alreadey serving"))))
-   (when-not @stop-signal
+   (when-not (terminating?)
      (swap! current-server (fn [_] (Thread/currentThread)))
      (try 
       (when-not (empty? @running-tasks)
@@ -64,7 +62,7 @@
 			(dosync (alter running-tasks assoc future task)
 				(alter tasks-to-start disj task))))
 		    @tasks-to-start))
-	(while (not @stop-signal) 
+	(while (not (terminating?)) 
 	       (try
 		(when-let [stopped (. executor-service poll 1 TimeUnit/SECONDS)] ;throws handled
 		  (try (. stopped get)
@@ -87,11 +85,13 @@
 					;guess this could spawn many threads
 		    (let [pause (:restart-pause *serve-options*)]
 		      (send-off restart-agent (fn [_] 
-					      (try
-					       (Thread/sleep 
-						(* pause 1000))
-					       (catch InterruptedException _)) 
-					      (dosync (alter tasks-to-start conj task))
+						(try
+						  (term-sleep pause)
+						  (catch InterruptedException _)) 
+						(dosync (alter tasks-to-start
+							     (fn [tasks]
+							       (when-not (terminating?)
+								 (conj tasks task)))))
 					      )))))
 		
 		(dorun (map (fn [c] 
@@ -153,13 +153,13 @@
 	(when (> 0 (count @running-tasks))
 	  (info (str "serve ends with " (count @running-tasks) " running tasks"))))
       (finally (swap! current-server (fn [_] nil))
-	       (swap! stop-signal (fn [_] false))
+	       ;(swap! stop-signal (fn [_] false))
 	       (info "Is down"))
       
       ))))
    
 ([tasks-to-run & options]
-   (when-not @stop-signal
+   (when-not (terminating?)
      (binding [*serve-options* (merge *serve-options* 
 				      (apply hash-map options))] 
        (dosync (ref-set tasks-to-start (hash-set)))

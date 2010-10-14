@@ -12,6 +12,7 @@
   :java-options {:debug "true"}
   :java-source-path [["src"]]
   :hooks [leiningen.hooks.javac]
+  :aot [monitor.main]
   :main monitor.main
   :manifest {"Class-Path" "."}
   :test-path "src"

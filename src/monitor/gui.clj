@@ -25,6 +25,9 @@
 
 (def exit-on-shutdown (atom false))
 
+(when (not (= "true" (System/getProperty "stayalive")))
+  (reset! exit-on-shutdown true))
+
 (def *shutdown* #(do 
 		   (when-let [t @runtime-thread]
 		     (swap! runtime-thread (fn [t] nil))

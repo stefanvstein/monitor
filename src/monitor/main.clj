@@ -1,11 +1,10 @@
 (ns monitor.main
   (:gen-class)
-  (:use (monitor gui logger linuxproc)))
+  (:use (monitor logger)))
  
 (defn -main [& line]
   (using-logger
-  (when (not (= "true" (System/getProperty "stayalive")))
-    (reset! exit-on-shutdown true))
+  
   (if (not (empty? line))
     (do
       (when (= (first line) "server")
@@ -15,10 +14,16 @@
 			   (second (re-find #"(?i)(.+)\.clj$" (second line)))
 			   (second line))]
 	    
-	    (do (load (str "/" filename)))
-	    (load "/conf1"))))
+	    (load (str "/" filename)))
+	    (println "You need to supply a config file" )))
       (when (= (first line) "linux")
 	(if (next line)
-	  (serve-linux-proc (Integer/parseInt (second line)) 15)
-	  (println "You need to supply a listener port"))))
-    (new-window true))))
+	  (if-let [port (Integer/parseInt (second line))]
+	    (do
+	      (def listener-port port)
+	      (load "/monitor/linuxproc")
+	      (eval '(monitor.linuxproc/serve-linux-proc monitor.main/listener-port 15)))
+	    (println "You need to supply a listener port")))))
+    (do
+      (load "/monitor/gui")
+      (eval '(monitor.gui/new-window true))))))

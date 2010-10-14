@@ -1,6 +1,6 @@
 (ns conf1 (:use monitor.monitor))
 
-(java6-jmx)
+;(java6-jmx)
 (perfmon "mssj022" 3434
 	 "Processor|System|Memory|PhysicalDisk|Network Interface" 
 	 ".*User Time|.*Interrupt Time|.*Processor Time|.*Idle Time|Interrupts/sec|Context Switches/sec|Available Bytes|Current Disk Queue Length|Output Queue Length"

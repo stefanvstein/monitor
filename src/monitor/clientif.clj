@@ -8,7 +8,8 @@
   (:use (clojure stacktrace test))
   (:use [clojure.contrib import-static])
   (:use (monitor database calculations))
-  (:use cupboard.utils))
+  (:use cupboard.utils)
+  (:use [clojure.contrib.logging :only [info error]]))
 
 (import-static java.util.Calendar YEAR MONTH DAY_OF_MONTH HOUR_OF_DAY MINUTE SECOND MILLISECOND)
 
@@ -126,7 +127,7 @@
     ;(println (- (System/currentTimeMillis) start))
     res))
   
-(def remote (atom nil))
+
 (def exported (proxy [ServerInterface] []
 		(rawData [from# to# names# transform# granularity#]
 			 ;(println "Raw data for " from# " to " to#)
@@ -140,34 +141,31 @@
 		(ping [])
 		))
 
-(defmacro serve-clients [port transfer-port stop-fn & form]
-  `(try
-      
-      (let [obj# (UnicastRemoteObject/exportObject 
-		       exported ~port)]
-	(swap! remote (fn [_#] obj#))
-	(if (nil? @remote)
-	  (throw (IllegalArgumentException. "Got a null as exported" ))))
-      
-      (let [server-socket# (ServerSocket. ~transfer-port)]
-	(. server-socket# setSoTimeout 1000)
-	(.start (Thread. (fn []
-			   (with-open [ss# server-socket#]
-			   (while (not (~stop-fn))
-				  (try
-				   (with-open [sock# (.accept ss#)
-					       output# (ObjectOutputStream. (.getOutputStream sock#))]
-				     (. output# writeObject @remote))
-				   (catch SocketTimeoutException _#)))))))
-	(do ~@form))
-      (catch Exception e#
-	   (println e#) )
-      (finally (when @remote
-		 (try 
-		  (println "Removeing interface!!!!!!!!!!!!!!!!!")
-		  (UnicastRemoteObject/unexportObject @remote true)
-		  (catch NoSuchObjectException _# ))
-		 (swap! remote (fn [_#] nil))))))
+(defmacro serve-clients [port transfer-port terminating? & form]
+  `(if-let [obj# (UnicastRemoteObject/exportObject 
+		  exported ~port)]
+     (try
+       (info "Client interface created")
+       (let [server-socket# (ServerSocket. ~transfer-port)]
+	 (. server-socket# setSoTimeout 1000)
+	 (doto (Thread. (fn []
+			  (with-open [ss# server-socket#]
+			    (info (str "Clients welcome on port " ~transfer-port))
+			    (while (not (~terminating?))
+			      (try
+				(with-open [sock# (.accept ss#)
+					    output# (ObjectOutputStream. (.getOutputStream sock#))]
+				  (. output# writeObject obj#))
+				(catch SocketTimeoutException _#)))
+			    (info "Stops serving client requests"))))
+	   (.setName "Client acceptor")
+	   (.start))
+	 (do ~@form))
+       (finally
+	(info "Removeing client interface")
+	(UnicastRemoteObject/unexportObject exported true)))
+     (throw (IllegalArgumentException. "Got a null as exported" ))))
+   
 
 ;(deftest simple
 ;  (is (not (nil? (byte-code-for "clojure.lang.PersistentArrayMap")))))
@@ -186,16 +184,16 @@
      (add-data {:host "Arne" :counter "Olle"} (dparse "20100101 100002") 2)
      (add-data {:host "Arne" :counter "Nisse"} (dparse "20100101 100003") 3)
      (add-data {:host "Bengt" :counter "Olle"} (dparse "20100101 100004") 4)
-     (is (= (raw-live-data [{"host" "Arne"}]) 
+     (is (= (raw-live-data [{"host" "Arne"}] ServerInterface$Transform/RAW) 
 	    {{"host" "Arne" "counter" "Nisse"} { (dparse "20100101 100001") 1  
 						 (dparse "20100101 100003") 3}
 	     {"host" "Arne" "counter" "Olle"} { (dparse "20100101 100002") 2}})) 
-     (is (= (raw-live-data [{"host" "Arne" "counter" "Olle"}]) 
+     (is (= (raw-live-data [{"host" "Arne" "counter" "Olle"}] ServerInterface$Transform/RAW) 
 	    {{"host" "Arne" "counter" "Olle"} { (dparse "20100101 100002") 2}})) 
-     (is (= (raw-live-data [{"counter" "Olle"}]) 
+     (is (= (raw-live-data [{"counter" "Olle"}] ServerInterface$Transform/RAW) 
 	    {{"host" "Arne" "counter" "Olle"} { (dparse "20100101 100002") 2}
 	     {"host" "Bengt" "counter" "Olle"} {(dparse "20100101 100004") 4}})) 
-     (is (= (raw-live-data [{"host" "Nisse"}]) {}))
+     (is (= (raw-live-data [{"host" "Nisse"}] ServerInterface$Transform/RAW) {}))
      (is (= (set (raw-live-names)) #{{"host" "Arne" "counter" "Olle"} 
 			       {"host" "Arne" "counter" "Nisse"}
 			       {"host" "Bengt" "counter" "Olle"}}))
