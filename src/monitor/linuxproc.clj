@@ -5,7 +5,7 @@
   (:import (java.util.concurrent.locks ReentrantLock))
   (:import (java.net SocketTimeoutException ServerSocket))
   (:use (clojure pprint test))
-  (:use (monitor database))
+  (:use (monitor database termination shutdown))
   (:use [clojure.contrib.logging :only [info]]))
 
 (defn net-dev-fn []
@@ -330,8 +330,9 @@
        (catch Exception e
 	 (if (.contains (.getMessage e) "EOF" )
 	   (info (str "Lost contact with linux proc process at " (.getHostName (.getRemoteSocketAddress socket))))
-	   
-	   (throw e)))))
+	   (if (.contains (.getMessage e) "Stopped")
+	     (info "Fetching info from remote linux proc stopped")  
+	     (throw e))))))
   ([host port stop]
      (try 
        (process-remote-linux-proc (java.net.Socket. host port) stop)
@@ -353,6 +354,8 @@
 
 
 (defn serve-linux-proc [port frequency]
+  (shutdown-button "Monitor Linux proc Agent")
+  (shutdown-jmx "monitor.linuxproc")
   (let [server (ServerSocket. port)
 	net-dev (net-dev-fn)
 	disk (disk-fn)
@@ -362,21 +365,20 @@
 			   (proxy [java.util.concurrent.ThreadFactory] []
 			     (newThread [runnable] (doto (Thread. runnable)
 						     (.setDaemon true)))))
-	condition (.newCondition (doto (ReentrantLock.)
-				   (.lock)))
 	]
     (. accept-executor execute (fn acceptor []
 				 (.setSoTimeout server 1000)
-				 (while true
+				 (while (not (terminating?))
 				   (try
 				     (if-let [socket (.accept server)]
-				       (do (.setSoTimeout socket 2000)
+				       (do (info "Got connection")
+					   (.setSoTimeout socket 2000)
 					   (swap! sockets (fn [sockets] (conj sockets socket)))))
 				     (catch SocketTimeoutException _)))
 				 ))
     (.shutdown accept-executor)
 
-    (loop [time (Date.)]
+    (loop [tim (Date.)]
       (let [text (to-text net-dev disk cpu)]
 	(dorun (map (fn [s]
 		      (try
@@ -384,12 +386,14 @@
 			  (println text)
 			  (flush))
 			(catch Exception e
-			  (println (.getMessage e))
+			  (info (.getMessage e))
+			  (info "Connection thrown")
 			  (swap! sockets (fn [sockets] (disj sockets s ))))))
 		    @sockets)))
 
-      (.awaitUntil condition time)
+      (term-sleep-until tim)
+
       (when-not (.isTerminated accept-executor)
-	(recur (Date. (+ (.getTime time) (* 1000 frequency))))))))
+	(recur (Date. (+ (.getTime tim) (* 1000 frequency))))))))
     
 			    

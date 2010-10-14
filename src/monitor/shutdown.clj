@@ -17,7 +17,8 @@
 				(stop)
 				(when @shutdown-frame
 				  (.dispose @shutdown-frame)))))
-		    (ObjectName. "monitor.man:type=State")))
+					;		    (ObjectName. "monitor.server:type=Management")))
+		  (ObjectName. (str text ":type=Management"))))
   
  
 					
