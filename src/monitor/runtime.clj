@@ -43,6 +43,14 @@
 	(reduce (fn [r e]
 		  (conj r (dissoc e :type))) [] data))) 
     
+(defn data-with-doubles [data]
+  (reduce (fn [r e]
+	    (assoc r (key e) (reduce (fn [r d]
+				       (assoc r (key d) (double (val d))))
+				     (sorted-map)
+				     (val e))))
+	  {}
+	  data))
 
 (def runtimes (atom #{}))
 
@@ -249,7 +257,7 @@
 						result)))
 					  {}  @combomodels-on-center)]
 			  (let [func  (.getSelectedItem func-combo)
-				data (with-type-added func (get-data [name-values] func server))]
+				data (with-type-added func (data-with-doubles (get-data [name-values] func server)))]
 			    (swap! (:watched-names contents) (fn [current] (apply conj current (keys data))))
 			    (swap! all-raw-names (fn [current] (apply conj current (keys data))))
 			    (swap! all-runtime-data (fn [all] (merge all data)))
@@ -325,14 +333,19 @@
 				     @runtime-names-of-interest))))
 
 
+  
 (defn get-new-data [server]
   (let [
 	data (reduce (fn [r type]
-		      (merge r (with-type-added type (get-data (without-type (with-type type @all-raw-names)) type server)))) {} types)]
+		       (merge r (with-type-added
+				  type
+				  (get-data (without-type (with-type type @all-raw-names)) type server))))
+		     {} types)]
     (if (not (empty? data))
-      (do
-	(swap! all-raw-names (fn [current] (apply conj current (keys data))))
-	(swap! all-runtime-data (fn [all] (merge all data)))
+
+      (let [data-with-doubles (data-with-doubles data)]
+	(swap! all-raw-names (fn [current] (apply conj current (keys data-with-doubles))))
+	(swap! all-runtime-data (fn [all] (merge all data-with-doubles)))
 	(SwingUtilities/invokeAndWait update-runtime-data))
       ;(println "There is no data")
       )))

@@ -354,7 +354,8 @@
 
 
 (defn serve-linux-proc [port frequency]
-  (shutdown-button "Monitor Linux proc Agent")
+  (when (not (System/getProperty "nogui"))
+    (shutdown-button "Monitor Linux proc Agent"))
   (shutdown-jmx "monitor.linuxproc")
   (let [server (ServerSocket. port)
 	net-dev (net-dev-fn)

@@ -20,7 +20,8 @@
   (dosync (alter tasks-to-start conj #(process-remote-linux-proc host port terminating?))))
 
 (defn in-env [ live-minutes history-days history-directory client-port]
-  (shutdown-button "Monitor server")
+  (when (not (System/getProperty "nogui"))
+    (shutdown-button "Monitor server"))
   (shutdown-jmx "monitor.server")
    (using-live
     (using-history history-directory

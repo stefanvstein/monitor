@@ -107,56 +107,55 @@
 				      names-of-interest)))]
 
 		      (SwingUtilities/invokeLater 
-		       (fn [] 
-			 (.setNotify chart false)
-			 (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries)))
-			 (dorun (map (fn [data]
-				       (let [data-key (assoc (key data) :type func-string :granularity granularity-string)
-					     identifier (str data-key)
-					     time-serie 
-					     (if-let 
-						 [serie 
-						  (. graph getSeries identifier)]
-					       serie
-					       (let [serie (TimeSeries. identifier)
-						     color (colors)]
-						 (.setNotify serie false)
-						 (. graph addSeries serie)
+		       (fn []
+			 (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
+						   (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries))))
+			       start-chart-notify (fn start-chart-notify [] (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
+						    (.setNotify chart true))
+			       create-new-time-serie (fn [data-key identifier]
+						       (let [serie (TimeSeries. identifier)
+								  color (colors)]
+							      (.setNotify serie false)
+							      (. graph addSeries serie)
+							      
+							      (.. chart 
+								  (getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries graph))) 
+								   color))
 						 
-						 (.. chart 
-						     (getPlot) 
-						     (getRenderer) 
-						     (setSeriesPaint 
-						      (- 
-						       (count (.getSeries graph)) 
-						       1) 
-						      color))
-						 
-						 (add-to-table data-key color identifier)
-						 (dorun (map (fn [i] (add-column i)) (keys data-key))) 
-						 serie))]
-					 (let [data-from-serie (time-serie-to-sortedmap time-serie)
-					       data-with-new-data (merge data-from-serie (val data))
+							      (add-to-table data-key color identifier)
+							      (dorun (map (fn [i] (add-column i)) (keys data-key))) 
+							      serie))]
+			   
+			   (stop-chart-notify)
+			   (dorun (map (fn [data]
+					 (let [data-key (assoc (key data) :type func-string :granularity granularity-string)
+					       make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
+					       data-values (make-double-values (val data))
+					       identifier (str data-key)
+					       time-serie (if-let [serie (. graph getSeries identifier)]
+							    serie
+							    (create-new-time-serie data-key identifier))
+					       data-from-serie (time-serie-to-sortedmap time-serie)
+					       data-with-new-data (merge data-from-serie data-values)
 					       nan-distance (condp = granularity-string
 								"All Data" (* 30 1000)
-							      "Minute" (* 2 60 1000)
-							      "Hour" (* 2 60 60 1000)
-							      "Day" (* 2 24 60 60 1000))
+								"Minute" (* 2 60 1000)
+								"Hour" (* 2 60 60 1000)
+								"Day" (* 2 24 60 60 1000))
 					       data-with-nans (with-nans data-with-new-data nan-distance)
 					       temp-serie (doto (TimeSeries. "") (.setNotify false))
 					       new-serie (reduce (fn [r i]
 								   (.add r  (TimeSeriesDataItem. 
-									(Millisecond. (key i)) 
-									(val i)))
+									     (Millisecond. (key i)) 
+									     (val i)))
 								   r)
 								 temp-serie data-with-nans)]
 					   (.clear time-serie)
-					   (.addAndOrUpdate time-serie new-serie))))
+					   (.addAndOrUpdate time-serie new-serie)))
 				     result))
-			 (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
-			 (.setNotify chart true))))
+			 (start-chart-notify)))))
 		   ))
-;)
+
 
 
 (defn analysis-add-dialog [contents server]

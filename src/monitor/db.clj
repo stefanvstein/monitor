@@ -30,19 +30,19 @@
   (.getLong (ByteBuffer/wrap bytes)))
 
 (defn- host-index-of [bytes]
-  (.getInt (ByteBuffer/wrap bytes) 16))
+  (.getInt (ByteBuffer/wrap bytes) 17))
 
 
 (defn- category-index-of [bytes]
-  (.getInt (ByteBuffer/wrap bytes) 20))
+  (.getInt (ByteBuffer/wrap bytes) 21))
 
 
 (defn- counter-index-of [bytes]
-  (.getInt (ByteBuffer/wrap bytes) 24))
+  (.getInt (ByteBuffer/wrap bytes) 25))
 
 
 (defn- instance-index-of [bytes]
-  (.getInt (ByteBuffer/wrap bytes) 28))
+  (.getInt (ByteBuffer/wrap bytes) 29))
    
 
 (def index-keywords-and-creators (zipmap 
@@ -127,15 +127,27 @@
 	  (save-index new-days day)
 	  (get (:by-name (get new-days day)) name))))))
 
-
+(defn- integral?
+  "returns true if a number is actually an integer (that is, has no fractional part)"
+  [x]
+  (cond
+   (integer? x) true
+   (decimal? x) (>= (.ulp (.stripTrailingZeros (bigdec 0))) 1) ; true iff no fractional part
+   (float? x)   (= x (Math/floor x))
+   (ratio? x)   (let [^clojure.lang.Ratio r x]
+                  (= 0 (rem (.numerator r) (.denominator r))))
+   :else        false))
 
 (defn- to-bytes [day value time-stamp index-data]
   (let [array-stream (ByteArrayOutputStream.)
 	data-out (DataOutputStream. array-stream)
 	the-day (get-day day)]
-
     (.writeLong data-out (.getTime #^Date time-stamp))
-    (.writeDouble data-out (double value))
+    (if (integral? value)
+      (do (.writeByte data-out 1)
+	  (.writeLong data-out (long value)))
+      (do (.writeByte data-out 2)
+	  (.writeDouble data-out (double value))))
     (.writeInt data-out (index-for-name day (:host index-data)))
     (.writeInt data-out (index-for-name day (:category index-data)))
     (.writeInt data-out (index-for-name day (:counter index-data)))
@@ -155,7 +167,10 @@
 (defn- from-bytes [bytes day]
   (let [buffer (ByteBuffer/wrap bytes)
 	timestamp (Date. (.getLong buffer))
-	value (.getDouble buffer)
+	value-type (int (.get buffer))
+	value (if (= 1 value-type)
+		(.getLong buffer)
+		(.getDouble buffer))
 	host (name-for-index day (.getInt buffer))
 	category (name-for-index day (.getInt buffer))
 	counter (name-for-index day (.getInt buffer))
