@@ -160,7 +160,8 @@
 
 (defn analysis-add-dialog [contents server]
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
-	from-model (let [d (Date.)
+	from-model (let [d @(:from contents)
+			   
 			c (Calendar/getInstance)
 		     
 			startd (.getTime (doto c
@@ -170,7 +171,8 @@
 					 (.setTime d)
 					 (.add Calendar/YEAR +1)))]
 		     (SplitDateSpinners. d endd startd ))		
-	to-model (let [d (Date.)
+	to-model (let [d @(:to contents)
+			 
 			c (Calendar/getInstance)
 		     
 			startd (.getTime (doto c
@@ -195,6 +197,8 @@
 	combomodels-on-center (atom {})
 
 	onAdd (fn []
+		(reset! (:from contents) (.getDate from-model))
+		(reset! (:to contents) (.getDate to-model))
 		(let [name-values (reduce (fn [result name-combomodel] 
 					    (let [the-value (.getSelectedItem (val name-combomodel))]
 					      (if (not (= "" the-value))
@@ -388,7 +392,8 @@
      :chart chart
      :colors (color-cycle)
      :time-series time-series
+     :from (atom (Date. (- (System/currentTimeMillis) (* 1000 60 60))))
+     :to (atom (Date.))
      :name "Monitor - Analysis Window"
-     ;:right-series right-series
      }))
 
