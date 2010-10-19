@@ -1,5 +1,5 @@
 (ns monitor.monitor
-  (:use (monitor database jmxcollection server clientif logger linuxproc shutdown termination))
+  (:use (monitor database jmxcollection server clientif logger linuxproc shutdown termination countdb))
   (:use [monitor.perfmonservice :only (perfmon-connection)]))
 
 (defn java6-jmx
@@ -23,30 +23,34 @@
   (when (not (System/getProperty "nogui"))
     (shutdown-button "Monitor server"))
   (shutdown-jmx "monitor.server")
-   (using-live
-    (using-history history-directory
-		   (serve-clients 0 client-port terminating?
-				  (dosync alter tasks-to-start conj
-					  (fn live-cleaner []
-					    (while (not (terminating?))
-					      (try (term-sleep 30)
-						   (catch InterruptedException _#))
-					      (when-not (terminating?)
-					      (clean-live-data-older-than 
-					       (java.util.Date. (- (System/currentTimeMillis) 
-								   (* 1000 60 live-minutes)))))))
-					  (fn history-cleaner []
-					    (while (not (terminating?))
-						       (try (term-sleep (* 60 3 ))
-							    (catch InterruptedException _))
-						       (when-not (terminating?)
-						       (clean-stored-data-older-than 
-							(java.util.Date. (- (System/currentTimeMillis) 
-									    (* history-days 24 1000 60 60))))))))
-				  (serve)
-				  )
-		   ))
-   (println "Done"))					    
+  				  
+ 
+  
+  (using-live
+   (dosync (alter tasks-to-start conj
+		  (fn live-cleaner []
+		    (while (not (terminating?))
+		      (try (term-sleep 30)
+			   (catch InterruptedException _#))
+		      (when-not (terminating?)
+			(clean-live-data-older-than 
+			 (java.util.Date. (- (System/currentTimeMillis) 
+					     (* 1000 60 live-minutes)))))))))
+   (using-history history-directory
+		  (jmx-db-record-counter "monitor.server")
+		  (dosync (alter tasks-to-start conj
+				 (fn history-cleaner []
+				   (while (not (terminating?))
+				     (try (term-sleep (* 60 3 ))
+					  (catch InterruptedException _))
+				     (when-not (terminating?)
+				       (clean-stored-data-older-than 
+					(java.util.Date. (- (System/currentTimeMillis) 
+							    (* history-days 24 1000 60 60)))))))))
+				 
+		  (serve-clients 0 client-port terminating?
+				 (serve))))
+      (println "Done"))		    
   
 
 

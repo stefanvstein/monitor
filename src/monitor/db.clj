@@ -55,7 +55,6 @@
 (defn- put-last [s e]
      (lazy-cat (remove #(= e %) s) [e]))
 
-
 (defn day-as-int 
   ([date]
      (let [par #(Integer/parseInt (.format (SimpleDateFormat. "yyyyMMdd") %))]
@@ -916,3 +915,8 @@
 		     (is (= 2 (count all)))
 		     (is (= 20071122 (second all)))))
      (finally  (rmdir-recursive tmp)))))
+
+(defn records [date]
+  (using-day date
+	     (db-count (:db *db-struct*))
+  ))
