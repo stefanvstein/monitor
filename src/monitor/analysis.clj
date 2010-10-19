@@ -1,6 +1,7 @@
 (ns monitor.analysis
   (:use (clojure stacktrace))
   (:use (monitor commongui tools))
+
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
@@ -21,7 +22,7 @@
   (:import (monitor SplitDateSpinners)))
 
 
-(defn on-update [names combomodels-on-center centerPanel add-button]
+(defn on-update [names combomodels-on-center centerPanel add-buttons]
   (let [combos-on-center (atom [])]
     (dorun (map #(do (. centerPanel remove %)) (.getComponents centerPanel)))
     (swap! combomodels-on-center (fn [_] {}))
@@ -62,7 +63,7 @@
 		      (swap! combos-on-center (fn [l] (conj l combo)))
 		      (swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel)))))
 		  names)))
-    (let [combo-action (create-comboaction @combomodels-on-center @combos-on-center add-button names)]
+    (let [combo-action (create-comboaction @combomodels-on-center @combos-on-center add-buttons names)]
       (dorun (map (fn [combo] (.addActionListener combo combo-action)) @combos-on-center))
     )))
 
@@ -196,7 +197,7 @@
 	granularity-combo (JComboBox. (to-array ["All Data" "Minute" "Hour" "Day"]))
 	combomodels-on-center (atom {})
 
-	onAdd (fn []
+	onAdd (fn [contents]
 		(reset! (:from contents) (.getDate from-model))
 		(reset! (:to contents) (.getDate to-model))
 		(let [name-values (reduce (fn [result name-combomodel] 
@@ -221,15 +222,23 @@
 	add (let [add (JButton. "Add")]
 	      (.setEnabled add false)
 	      add)
+	add-new-window (let [add (JButton. "Add New")]
+			 (.setEnabled add false)
+			 add)
 	close (JButton. "Close")
 	centerPanel (JPanel.)]
 
     (doto dialog
       (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
       (.setResizable false))
-
+    
     (.addActionListener close (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
-    (.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd))))
+    (.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd contents))))
+    (.addActionListener add-new-window (proxy [ActionListener] []
+					 (actionPerformed [event]
+							  (onAdd (@new-window-fn true))
+							  )))
+    
     (let [contentPane (.getContentPane dialog)]
       (. contentPane add centerPanel BorderLayout/CENTER)
       (. contentPane add (doto (JPanel.)
@@ -237,6 +246,7 @@
 			   (.add func-combo)
 			   (.add granularity-combo)
 			   (.add add)
+			   (.add add-new-window)
 			   (.add close)) 
 	   BorderLayout/SOUTH)
 
@@ -285,7 +295,7 @@
 											 (conj r e)) r e)
 									       ) #{} (vals names)) 
 								     ))
-						  (on-update names combomodels-on-center centerPanel add)
+						  (on-update names combomodels-on-center centerPanel [add add-new-window])
 						  (.pack dialog))))]
 		  (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
 		  update))))

@@ -1,6 +1,6 @@
 (ns monitor.gui
   (:use (clojure stacktrace))
-  (:use (monitor analysis runtime))
+  (:use (monitor analysis runtime commongui))
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
@@ -191,7 +191,7 @@
     (add-runtime contents)))
 
 (defn new-window [analysis]
-  
+  (reset! new-window-fn new-window) 
   (let [frame (JFrame.)
 	contents (if analysis (new-analysis-panel) (new-runtime-panel frame))]
     (swap! frames #(conj % frame))
@@ -247,4 +247,7 @@
 			      
 	
       (.pack)
-      (.setVisible true))))
+      (.setVisible true))
+    contents))
+
+

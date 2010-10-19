@@ -918,5 +918,5 @@
 
 (defn records [date]
   (using-day date
-	     (db-count (:db *db-struct*))
-  ))
+	     (when (:db *db-struct*)
+	       (db-count (:db *db-struct*)))))
