@@ -245,11 +245,14 @@
 	add-button (let [add (JButton. "Add")]
 		     (.setEnabled add false)
 		     add)
+	add-to-new-button (let [add (JButton. "Add New")]
+		     (.setEnabled add false)
+		     add)
 	func-combo (JComboBox. (to-array types))
 	close-button (JButton. "Close")
 	centerPanel (JPanel.)
 	combomodels-on-center (atom {})
-	onAdd (fn [] 
+	onAdd (fn [contents] 
 			(let [name-values (reduce (fn [result name-combomodel] 
 					    (let [the-value (.getSelectedItem (val name-combomodel))]
 					      (if (not (= "" the-value))
@@ -268,13 +271,16 @@
       (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
       (.setResizable false))
     (.addActionListener close-button (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
-    (.addActionListener add-button (proxy [ActionListener] [] (actionPerformed [event] (onAdd))))
+    (.addActionListener add-button (proxy [ActionListener] [] (actionPerformed [event] (onAdd contents))))
+    (.addActionListener add-to-new-button (proxy [ActionListener] [] (actionPerformed [event]
+										   (onAdd (@new-window-fn false)))))
     (let [contentPane (.getContentPane dialog)]
       (. contentPane add centerPanel BorderLayout/CENTER)
       (. contentPane add (doto (JPanel.)
 			   (.setLayout (FlowLayout. FlowLayout/CENTER))
 			   (.add func-combo)
 			   (.add add-button)
+			   (.add add-to-new-button)
 			   (.add close-button)) 
 	 BorderLayout/SOUTH))
     (let [names (get-names (server))]
@@ -315,7 +321,7 @@
 			(swap! combos-on-center (fn [l] (conj l combo)))
 			(swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel)))))
 		    names))
-	(let [combo-action (create-comboaction @combomodels-on-center @combos-on-center add-button names)]
+	(let [combo-action (create-comboaction @combomodels-on-center @combos-on-center [add-to-new-button add-button] names)]
 	  (dorun (map (fn [combo] (.addActionListener combo combo-action)) @combos-on-center)))
 				
 	))
