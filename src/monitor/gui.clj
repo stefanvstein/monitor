@@ -37,7 +37,7 @@
 			     (.join t)
 			     (catch InterruptedException _)))
 
-		     (println "runtime thread is terminated"))
+		     #_(println "runtime thread is terminated"))
 		   (when @exit-on-shutdown
 		     (System/exit 0))))
 
@@ -142,8 +142,9 @@
 							    (Thread/sleep 15000)
 							    (get-new-data  server)
 							    (catch Exception e
+							      (when-not (= InterruptedException (class e))
 							      (print-cause-trace e)
-							      (println))))
+							      (println)))))
 						   "Runtime Thread")
 				      (.setDaemon true))))
       (.start @runtime-thread))))

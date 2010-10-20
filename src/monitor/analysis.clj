@@ -10,7 +10,7 @@
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
-		     GridBagLayout GridBagConstraints Insets ))
+		     GridBagLayout GridBagConstraints Insets BasicStroke))
   (:import (java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter))
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
@@ -74,88 +74,97 @@
 )
 
 			
-(defn on-add-to-analysis [from to name-values all-names func-string granularity-string graph colors chart add-to-table add-column server]
-					;  (.start (Thread.
+(defn on-add-to-analysis [from to name-values all-names func-string granularity-string graph colors chart add-to-table add-column statusbar server]
+  (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
+			    (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries))))
+	start-chart-notify (fn start-chart-notify [] (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
+			     (.setNotify chart true))
+	create-new-time-serie (fn [data-key identifier]
+				(let [serie (TimeSeries. identifier)
+				      color (colors)]
+				  (.setNotify serie false)
+				  (. graph addSeries serie)
+				  
+				  (.. chart 
+				      (getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries graph)))
+									      color))
+				  
+				  (add-to-table data-key color identifier)
+				  (dorun (map (fn [i] (add-column i)) (keys data-key))) 
+				  serie))
+	updatechart (fn [data] (SwingUtilities/invokeLater 
+				(fn []
+				  
+				  (stop-chart-notify)
+				  (dorun (map (fn [data]
+						
+						
+						(let [data-key (assoc (key data) :type func-string :granularity granularity-string)
+						      make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
+						      data-values (make-double-values (val data))
+						      identifier (str data-key)
+						      time-serie (if-let [serie (. graph getSeries identifier)]
+								   serie
+								   (create-new-time-serie data-key identifier))
+						      data-from-serie (time-serie-to-sortedmap time-serie)
+						      data-with-new-data (merge data-from-serie data-values)
+						      nan-distance (condp = granularity-string
+								       "All Data" (* 30 1000)
+								       "Minute" (* 2 60 1000)
+								       "Hour" (* 2 60 60 1000)
+								       "Day" (* 2 24 60 60 1000))
+						      data-with-nans (with-nans data-with-new-data nan-distance)
+						      temp-serie (doto (TimeSeries. "") (.setNotify false))
+						      new-serie (reduce (fn [r i]
+									  (.add r  (TimeSeriesDataItem. 
+										    (Millisecond. (key i)) 
+										    (val i)))
+									  r)
+									temp-serie data-with-nans)]
+						  (.clear time-serie)
+						  (.addAndOrUpdate time-serie new-serie)))
+					      data))
+				  (start-chart-notify))))]
+    
+	   (future  	     
+	     (if (= "Raw" func-string)
+	       (let [days (full-days-between from to)
+		     current (atom 0)]
+		 (dorun (map (fn [ e ]
+			       (swap! current inc) 
+			       (.setText statusbar (str "Retrieveing " @current " of " (count days)))
+			       (updatechart (get-data (first e)
+						      (second e)
+						      name-values
+						      func-string
+						      granularity-string
+						      server)))
+			     days)))
+		 
+		 
+	       (let [current (atom 0)
+		     names-of-interest (let [sel-as-map (apply assoc {} name-values)]
+					 (reduce (fn [c a] 
+						   (let [s (select-keys a (keys sel-as-map))]
+						     (if (= s sel-as-map)
+						       (conj c a)
+						       c)))
+						 [] all-names))]
+		 (dorun (map (fn [e]
+			(swap! current inc)
+			(.setText statusbar (str "Retrieveing " @current " of " (count names-of-interest)))
+			(updatechart (get-data from
+					       to
+					       (reduce (fn [v e]
+							 (conj v (key e) (val e))) [] e)
+					       func-string
+					       granularity-string
+					       server)))
+		      
+		      names-of-interest))))
 
-	   (future  
-	     
-	     (let [result (if (= "Raw" func-string)
-			    (reduce (fn [c e]
-				      (merge c (get-data (first e)
-							 (second e)
-							 name-values
-							 func-string
-							 granularity-string
-							 server)))
-				    {}
-				    (full-days-between from to))
-			    (let [names-of-interest (let [sel-as-map (apply assoc {} name-values)]
-						      (reduce (fn [c a] 
-								(let [s (select-keys a (keys sel-as-map))]
-								  (if (= s sel-as-map)
-								    (conj c a)
-								    c)))
-							      [] all-names))]
-			      (reduce (fn [c e]
-					(merge c (get-data from
-							   to
-							   (reduce (fn [v e]
-								     (conj v (key e) (val e))) [] e)
-							   func-string
-							   granularity-string
-							   server)))
-				      {}
-				      names-of-interest)))]
-
-		      (SwingUtilities/invokeLater 
-		       (fn []
-			 (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
-						   (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries))))
-			       start-chart-notify (fn start-chart-notify [] (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
-						    (.setNotify chart true))
-			       create-new-time-serie (fn [data-key identifier]
-						       (let [serie (TimeSeries. identifier)
-								  color (colors)]
-							      (.setNotify serie false)
-							      (. graph addSeries serie)
-							      
-							      (.. chart 
-								  (getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries graph))) 
-								   color))
-						 
-							      (add-to-table data-key color identifier)
-							      (dorun (map (fn [i] (add-column i)) (keys data-key))) 
-							      serie))]
-			   
-			   (stop-chart-notify)
-			   (dorun (map (fn [data]
-					 (let [data-key (assoc (key data) :type func-string :granularity granularity-string)
-					       make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
-					       data-values (make-double-values (val data))
-					       identifier (str data-key)
-					       time-serie (if-let [serie (. graph getSeries identifier)]
-							    serie
-							    (create-new-time-serie data-key identifier))
-					       data-from-serie (time-serie-to-sortedmap time-serie)
-					       data-with-new-data (merge data-from-serie data-values)
-					       nan-distance (condp = granularity-string
-								"All Data" (* 30 1000)
-								"Minute" (* 2 60 1000)
-								"Hour" (* 2 60 60 1000)
-								"Day" (* 2 24 60 60 1000))
-					       data-with-nans (with-nans data-with-new-data nan-distance)
-					       temp-serie (doto (TimeSeries. "") (.setNotify false))
-					       new-serie (reduce (fn [r i]
-								   (.add r  (TimeSeriesDataItem. 
-									     (Millisecond. (key i)) 
-									     (val i)))
-								   r)
-								 temp-serie data-with-nans)]
-					   (.clear time-serie)
-					   (.addAndOrUpdate time-serie new-serie)))
-				     result))
-			 (start-chart-notify)))))
-		   ))
+	       (.setText statusbar " ")
+)))
 
 
 
@@ -217,7 +226,8 @@
 				    (:chart contents)
 				    (:add-to-table contents)
 				    (:add-column contents)
-			server)))
+				    (:status-label contents)
+				    server)))
 	
 	add (let [add (JButton. "Add")]
 	      (.setEnabled add false)
@@ -303,8 +313,10 @@
 
 
 
-(defn new-analysis-panel [] 
-  (let [panel (JPanel.)
+(defn new-analysis-panel []
+
+  (let [status-label (JLabel. " ")
+	panel (JPanel.)
 	time-series (TimeSeriesCollection.)
 ;	right-series (TimeSeriesCollection.)
 	chart (ChartFactory/createTimeSeriesChart 
@@ -333,7 +345,37 @@
 		      y (.getY event)
 		      row (.rowAtPoint table (Point. x y))]
 		  (swap! current-row (fn [_] (.convertRowIndexToModel table row)))
-		  (.show popupMenu table x y)))]
+		  (.show popupMenu table x y)))
+	highlighted (atom nil)
+	mouse-table-adapter (proxy [MouseAdapter] []
+			      (mousePressed [event]
+					    (when (.isPopupTrigger event)
+					      (popup event)))
+			      (mouseReleased [event]
+					     (when (.isPopupTrigger event)
+					       (popup event)))
+			      (mouseMoved [event]
+					  (let [x (.getX event)
+						y (.getY event)
+						row (.convertRowIndexToModel table (.rowAtPoint table (Point. x y)))
+						renderer (.. chart (getPlot) (getRenderer))
+						stroke (.getSeriesStroke renderer row)]
+					    (when-let [hl @highlighted]
+					      (when-not (= (first hl) row)
+						(.setSeriesStroke renderer (first hl) (second hl))
+						(reset! highlighted nil)
+						))
+					    (when-not @highlighted
+					      (.setSeriesStroke renderer row (BasicStroke. 2.0)) 
+					      (reset! highlighted [row stroke]))))
+			      
+			      (mouseExited [event]
+					   (when-let [hl @highlighted]
+					     (let [renderer (.. chart (getPlot) (getRenderer))]
+					       (.setSeriesStroke renderer (first hl) (second hl))
+											       (reset! highlighted nil)) 
+					     )))
+	]
 
 
     (.setDateFormatOverride (.getDomainAxis (.getPlot chart)) (SimpleDateFormat. "yy-MM-dd HH:mm:ss"))
@@ -350,16 +392,18 @@
       (.setOutlineVisible false))
     
     (doto panel
+      
       (.setLayout (BorderLayout.))
+      (.add status-label BorderLayout/SOUTH)
       (.add (doto (JSplitPane.)
 	      (.setOrientation JSplitPane/VERTICAL_SPLIT)
 	      (.setName "splitPane")
 	      (.setBottomComponent (doto (JScrollPane.)
-				   (.setViewportView (doto table
-						       (.setDefaultRenderer 
-							Color 
-							(proxy [TableCellRenderer] []
-							  (getTableCellRendererComponent 
+				     (.setViewportView (doto table
+							 (.setDefaultRenderer 
+							  Color 
+							  (proxy [TableCellRenderer] []
+							    (getTableCellRendererComponent 
 							   [table color selected focus row column]
 							  ; (doto (JLabel. "<")
 							   (doto (JLabel.)
@@ -369,13 +413,9 @@
 						       (.setModel (:model tbl-model))
 						       (.setCellSelectionEnabled false)
 						       (.setName "table")
-						       (.addMouseListener (proxy [MouseAdapter] []
-									    (mousePressed [event]
-											  (when (.isPopupTrigger event)
-											    (popup event)))
-									    (mouseReleased [event]
-											   (when (.isPopupTrigger event)
-											     (popup event)))))
+						      
+						       (.addMouseListener mouse-table-adapter)
+						       (.addMouseMotionListener mouse-table-adapter)
 						       (.setAutoCreateRowSorter true)))))
 	      (.setTopComponent (doto (ChartPanel. 
 				       (doto chart))
@@ -393,10 +433,11 @@
 										(.setMaximumDrawWidth c  (.getWidth size))
 										(.fireChartChanged (.getChart c))
 										))
-									     )))))))))
+									     ))))))) BorderLayout/CENTER))
 				 
  ;(ChartUtilities/applyCurrentTheme chart)				  
-    {:panel panel 
+    {:panel panel
+     :status-label status-label
      :add-to-table (:add-row tbl-model)
      :add-column (:add-column tbl-model)
      :chart chart
