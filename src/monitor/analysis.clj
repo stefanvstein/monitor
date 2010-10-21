@@ -21,52 +21,49 @@
   (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond))
   (:import (monitor SplitDateSpinners)))
 
-
-(defn on-update [names combomodels-on-center centerPanel add-buttons]
-  (let [combos-on-center (atom [])]
-    (dorun (map #(do (. centerPanel remove %)) (.getComponents centerPanel)))
-    (swap! combomodels-on-center (fn [_] {}))
-    (swap! combos-on-center (fn [_] []))
-    (.setLayout centerPanel (GridBagLayout.))
-    (let [labelsOnCenter (atom [])]
-      (dorun (map (fn [a-name]
-		    (let [field-name (name (key a-name))
-			  label (JLabel. field-name JLabel/RIGHT)
-			  comboModel (DefaultComboBoxModel.)
-			  combo (JComboBox. comboModel)]
-		      (. comboModel addElement "")
-		      (let [toadd (reduce (fn [toadd i]
-					    (if-let [a-value ((key a-name) i)]
-					      (conj toadd a-value)
-					      toadd))
-					  #{} (val a-name))]
-			(dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
-		      (. combo setName field-name)
+(defn on-update
+  "Returns panel and models"
+  [names add-buttons]
+  (let [center-panel (doto (JPanel.)
+		       (.setLayout  (GridBagLayout.)))
+	combos-and-models (loop [combos [] models {} names names]
+			    (let [a-name (first names)
+				  field-name (name (key a-name))
+				  label (JLabel. field-name JLabel/RIGHT)
+				  combo-model (DefaultComboBoxModel. (to-array (cons "" (reduce (fn [toadd i]
+												  (if-let [a-value ((key a-name) i)]
+												    (conj toadd a-value)
+												    toadd))
+												#{}
+												(val a-name)))))
+				  combo (doto (JComboBox. combo-model)
+					  (.setName field-name))]
+			      (doto center-panel
+				(.add label (GridBagConstraints. 
+					     0 GridBagConstraints/RELATIVE 
+					     1 1 
+					     0 0 
+					     GridBagConstraints/EAST 
+					     GridBagConstraints/NONE 
+					     (Insets. 1 1 0 4) 
+					     0 0 ))
+				(.add combo (GridBagConstraints. 
+					     1 GridBagConstraints/RELATIVE 
+					     1 1 
+					     0 0 
+					     GridBagConstraints/WEST 
+					     GridBagConstraints/NONE 
+					     (Insets. 0 0 0 0) 
+					     0 0 )))
+			      (if-let [names (next names)]
+				(recur (conj combos combo) (assoc models (key a-name) combo-model) names)
+				[(conj combos combo) (assoc models (key a-name) combo-model)])))
+	combo-action (create-comboaction (second combos-and-models) (first combos-and-models) add-buttons names)]
+    (dorun (map (fn [combo] (.addActionListener combo combo-action))
+		(first combos-and-models)))
+    [center-panel (second combos-and-models)]
+    ))
 		      
-		      (. centerPanel add label (GridBagConstraints. 
-						0 GridBagConstraints/RELATIVE 
-						1 1 
-						0 0 
-						GridBagConstraints/EAST 
-						GridBagConstraints/NONE 
-						(Insets. 1 1 0 4) 
-						0 0 ))
-		      (. centerPanel add combo (GridBagConstraints. 
-						1 GridBagConstraints/RELATIVE 
-						1 1 
-						0 0 
-						GridBagConstraints/WEST 
-						GridBagConstraints/NONE 
-						(Insets. 0 0 0 0) 
-						0 0 ))
-		      (swap! labelsOnCenter (fn [l] (conj l label)))
-		      (swap! combos-on-center (fn [l] (conj l combo)))
-		      (swap! combomodels-on-center (fn [l] (assoc l (key a-name) comboModel)))))
-		  names)))
-    (let [combo-action (create-comboaction @combomodels-on-center @combos-on-center add-buttons names)]
-      (dorun (map (fn [combo] (.addActionListener combo combo-action)) @combos-on-center))
-    )))
-
 (defn- time-serie-to-sortedmap [timeserie]
   (reduce (fn [r i] 
 	  (assoc r (Date. (.getFirstMillisecond (.getPeriod i ))) (.getValue i))) 
@@ -236,7 +233,8 @@
 			 (.setEnabled add false)
 			 add)
 	close (JButton. "Close")
-	centerPanel (JPanel.)]
+	center-panel (atom (JPanel.))]
+
 
     (doto dialog
       (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
@@ -250,7 +248,7 @@
 							  )))
     
     (let [contentPane (.getContentPane dialog)]
-      (. contentPane add centerPanel BorderLayout/CENTER)
+      (. contentPane add @center-panel BorderLayout/CENTER)
       (. contentPane add (doto (JPanel.)
 			   (.setLayout (FlowLayout. FlowLayout/CENTER))
 			   (.add func-combo)
@@ -305,7 +303,14 @@
 											 (conj r e)) r e)
 									       ) #{} (vals names)) 
 								     ))
-						  (on-update names combomodels-on-center centerPanel [add add-new-window])
+						  (let [panel-and-models (on-update names [add add-new-window])
+							panel (first panel-and-models)
+							content-pane (.getContentPane dialog)]
+						    (.remove content-pane @center-panel)
+						    (reset! center-panel panel)
+						    (reset! combomodels-on-center (second panel-and-models))
+						    (.add content-pane panel BorderLayout/CENTER)
+						    )
 						  (.pack dialog))))]
 		  (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
 		  update))))
