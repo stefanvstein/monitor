@@ -106,7 +106,7 @@
   (def-marshal-write :set seq-write))
 (def-marshal-write :byte-array
   (fn [#^TupleOutput tuple-output data]
-    (.writeFast tuple-output data)))
+    (.writeFast tuple-output #^bytes data)))
 (def-marshal-write :map
   (fn [tuple-output data]
     (marshal-write tuple-output (count data))

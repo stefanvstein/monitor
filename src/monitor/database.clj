@@ -111,17 +111,17 @@
 						    (rest row)))) 
 				    combinations) ]
 
-     (reduce (fn [result names-and-data-for-a-day]
+     (persistent! (reduce (fn [result names-and-data-for-a-day]
 	       (if-let [data-added 
 			(apply 
 			 get-from-db (fn [data-seq] 
 					(reduce (fn [d h]
-						  (let [timestamp (first (next h))
+						  (let [#^Date timestamp (first (next h))
 							timestamp-long (.getTime timestamp)]
 						    
 						    (if (and (> timestamp-long lower-long)
 							     (< timestamp-long upper-long))
-						      (add d 
+						      (transient-add d 
 							   (first h) 
 							   timestamp 
 							   (first(nnext h)))
@@ -132,8 +132,8 @@
 			 (rest names-and-data-for-a-day))]
 		 data-added 
 		 result))
-	     {} 
-	     combinations-vectors)))))
+	     (transient {}) 
+	     combinations-vectors))))))
 
 (defn data-by 
   ([#^Date lower #^Date upper & name-spec]
@@ -165,14 +165,14 @@
 	      fored (fn [data needs] 
 		      (for [data-row data a-need needs] 
 			(list data-row a-need)))]
-	  (reduce (fn [result row-and-need]
+	  (persistent! (reduce (fn [result row-and-need]
 		    (let [required-key (key (second row-and-need))
 			  required-values (val (second row-and-need))
 			  row-key (key (first row-and-need))]
 		      (if (not (keep? required-key required-values row-key))
-			(dissoc result row-key)
+			(dissoc! result row-key)
 			result)))
-		  from-db (fored from-db needs))))))))
+		  (transient from-db) (fored from-db needs)))))))))
 
   ([pred]
      (when @*live-data*

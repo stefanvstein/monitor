@@ -8,9 +8,9 @@
 (def HOUR HOUR_OF_DAY)
 
 (defn- date-seq [date calendar-field n]
-  (let [c (doto (Calendar/getInstance)
+  (let [#^Calendar c (doto (Calendar/getInstance)
 	    (.setTime date ))
-	t (fn t [c]
+	t (fn t [#^Calendar c]
 	    (lazy-seq
 	     (cons (.getTime c)
 		   (t (doto c
@@ -56,20 +56,20 @@
 			(.getTime cal))
 	steps (date-seq (smallest-date (key (first s)) granularity) granularity 1)
 	f (fn f [s history steps]
-	    (let [take-from (first steps)
-		  take-until (second steps)
+	    (let [#^Date take-from (first steps)
+		  #^Date take-until (second steps)
 		  
 		  taken (reduce #(assoc %1 (key %2) (val %2))
 					      (sorted-map)
 					      (take-while #(>= (.getTime take-until)
-							      (.getTime (key %)))
+							      (.getTime #^Date (key %)))
 							  s))
 		  remove-until (.getTime (doto cal
 				 (.setTime take-until)
 				 (.add history-unit (- 0 history-length))))
 				 
 		  history (let [removed (apply dissoc history
-					       (filter #(< (.getTime %) (.getTime remove-until)) 
+					       (filter #(< (.getTime #^Date %) (.getTime remove-until)) 
 						       (keys (rseq history))))]
 				(merge removed taken))
 		  values (algorithm remove-until take-from take-until history)
@@ -143,11 +143,11 @@
 		   HOUR (* 60 60 1000)
 		   DAY (* 24 60 60 1000)
 		   (throw (IllegalArgumentException. "Illegal tick")))
-	algo (fn [history-start start end history]
+	algo (fn [history-start #^Date start #^Date end history]
 		
 	       (let [within-start (select-keys history
-					       (select #(and (<= (.getTime start) (.getTime %))
-							     (> (.getTime end) (.getTime %)))
+					       (select #(and (<= (.getTime start) (.getTime #^Date %))
+							     (> (.getTime end) (.getTime #^Date %)))
 						       (set (keys history))))]
 		 
 		 (if (empty? within-start)

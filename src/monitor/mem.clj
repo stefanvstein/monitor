@@ -42,6 +42,13 @@
 		     [] 
 		     (keys another-database)))))
 
+(defn transient-add
+  "Returns database with key and value added to the sorted-map associated with name. Or, with all entries found in another-database added."
+  ([database name key value]
+    (assoc! database name (added-to database name key value)))
+  ([database name kvs]
+     (assoc! database name (added-to database name kvs))))
+
 
 (defn by-name
   "Returns current sorted-map of name in database, nil if non existing. 

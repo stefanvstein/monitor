@@ -23,7 +23,7 @@
 
 
 (defn full-days-between
-  [from to]
+  [#^Date from #^Date to]
   (if (> (.getTime from) (.getTime to))
     (full-days-between to from)
     (if (= (.getTime from)(.getTime to))
