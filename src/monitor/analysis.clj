@@ -1,5 +1,5 @@
 (ns monitor.analysis
-  (:use (clojure stacktrace))
+  (:use (clojure stacktrace pprint))
   (:use (monitor commongui tools))
 
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
@@ -190,17 +190,47 @@
 					 (.add Calendar/YEAR +1)))]
 		     (SplitDateSpinners. d endd startd ))		
 
-	func-combo (JComboBox. (to-array ["Raw" "Average/Minute" "Average/Hour" "Average/Day"
+		granularity-combo (doto (JComboBox. (to-array ["All Data" "Minute" "Hour" "Day"]))
+			    (.setEnabled false))
+
+	func-combo (let [c (JComboBox. (to-array ["Raw" "Average/Minute" "Average/Hour" "Average/Day"
 						     "Mean/Minute" "Mean/Hour" "Mean/Day"
 						     "Min/Minute" "Min/Hour" "Min/Day"
 						     "Max/Minute" "Max/Hour" "Max/Day"
 						     "Change/Second"
 						     "Change/Minute"
-						     "Change/Hour"]))
+						     "Change/Hour"]))]
+		     (.addActionListener c (proxy [ActionListener] []
+			      (actionPerformed [_]
+					       (let [fun (.getSelectedItem (.getModel c ))
+						     gran-model (.getModel granularity-combo)]
+						 (if (= fun "Raw")
+						   (.setEnabled granularity-combo false)
+						   (do (.setEnabled granularity-combo true)
+						   (cond
+						    (some #{fun} ["Average/Minute" 
+								  "Mean/Minute" 
+								  "Min/Minute"
+								  "Max/Minute"])
+						    (.setModel granularity-combo (DefaultComboBoxModel. (to-array ["All Data" "Minute"])))
+						    (some #{fun} ["Average/Hour"
+								  "Mean/Hour" 
+								  "Min/Hour" 
+								  "Max/Hour"])
+						    (.setModel granularity-combo (DefaultComboBoxModel. (to-array ["All Data" "Minute" "Hour"])))
+						    (some #{fun} ["Average/Day"
+								  "Mean/Day" 
+								  "Min/Day" 
+								  "Max/Day"
+								  "Change/Second"
+								  "Change/Minute"
+								  "Change/Hour"])
+						    (.setModel granularity-combo (DefaultComboBoxModel. (to-array ["All Data" "Minute" "Hour" "Day"])))
+						    )))))))
+		     c)
+		     
 	all-names (atom [])
-	
-
-	granularity-combo (JComboBox. (to-array ["All Data" "Minute" "Hour" "Day"]))
+	center-panel (atom (JPanel.))	
 	combomodels-on-center (atom {})
 
 	onAdd (fn [contents]
@@ -211,9 +241,45 @@
 					      (if (not (= "" the-value))
 						(conj result (key name-combomodel) the-value)
 						result)))
-					  []  @combomodels-on-center)]
-		(on-add-to-analysis (.getDate from-model)
-				    (.getDate to-model)
+					  []  @combomodels-on-center)
+		      from (.getDate from-model)
+		      to (.getDate to-model)
+
+		      resulting-number-of-graphs (fn [panel names]
+					      (let [selection (reduce (fn [r e]
+									(assoc r (keyword (.getName e)) (.getSelectedItem e)))
+								      {}
+								      (filter #(not (= "" (.getSelectedItem %)))
+									      (filter #(.isEnabled %)
+										      (filter #(instance? JComboBox %)
+											      (vec (.getComponents panel))))))]
+						(count (filter #(= (select-keys % (keys selection)) selection) names))))
+		      are-you-sure (fn are-you-sure [from to func-string granularity-string]
+				     (if (< to from)
+				       (are-you-sure to from)
+				       (if (cond
+					    (and (< (* 1000 60 60 24) (- to from))
+						 (= "Raw" func-string))
+					    true
+					    (and (< (* 1000 60 60 24 2) (- to from))
+						 (some #{granularity-string} ["Minute" "All Data"]))
+					    true
+					    (and (< (* 1000 60 60 24 7) (- to from))
+						 (some #{granularity-string} ["Hour" "Minute" "All Data"]))
+					    true
+					    (and (< (* 1000 60 60 24 50) (- to from))
+						 (some #{granularity-string} ["Day" "Hour" "Minute" "All Data"]))
+					    true
+					    (< 10  (resulting-number-of-graphs @center-panel @all-names))
+					    true
+					    true false)
+					 (= JOptionPane/YES_OPTION (JOptionPane/showConfirmDialog dialog "Are you sure, this appear to be a lot of data?" "Are you sure?" JOptionPane/YES_NO_OPTION))
+					 true)
+				     ))]
+		  ;			
+		 (if (are-you-sure (.getTime from) (.getTime to) (.getSelectedItem func-combo) (.getSelectedItem granularity-combo))
+		   (on-add-to-analysis from
+				       to
 				    name-values
 				    @all-names
 				    (.getSelectedItem func-combo)
@@ -224,7 +290,7 @@
 				    (:add-to-table contents)
 				    (:add-column contents)
 				    (:status-label contents)
-				    server)))
+				    server))))
 	
 	add (let [add (JButton. "Add")]
 	      (.setEnabled add false)
@@ -233,7 +299,7 @@
 			 (.setEnabled add false)
 			 add)
 	close (JButton. "Close")
-	center-panel (atom (JPanel.))]
+	]
 
 
     (doto dialog
@@ -303,6 +369,7 @@
 											 (conj r e)) r e)
 									       ) #{} (vals names)) 
 								     ))
+						  
 						  (let [panel-and-models (on-update names [add add-new-window])
 							panel (first panel-and-models)
 							content-pane (.getContentPane dialog)]

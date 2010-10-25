@@ -186,7 +186,7 @@
 				      (dorun (map #(.setEnabled % true) add-buttons)) 
 				      ))))]
 				    
-    (swap! place-holder (fn [_] action))
+    (reset! place-holder action)
     action
 ))
 
