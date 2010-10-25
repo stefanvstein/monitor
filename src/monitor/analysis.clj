@@ -1,17 +1,17 @@
 (ns monitor.analysis
   (:use (clojure stacktrace pprint))
-  (:use (monitor commongui tools))
+  (:use (monitor commongui tools mem))
 
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
-			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
+			JPanel JScrollPane JSplitPane JTable JCheckBox JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
 			DefaultComboBoxModel GroupLayout GroupLayout$Alignment JPopupMenu
-			BorderFactory JSpinner$DateEditor))
+			BorderFactory JSpinner$DateEditor BoxLayout))
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
-		     GridBagLayout GridBagConstraints Insets BasicStroke))
-  (:import (java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter))
+		     GridBagLayout GridBagConstraints Insets BasicStroke ))
+  (:import (java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter ItemEvent ItemListener))
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
   (:import (java.util Calendar Date))
@@ -71,11 +71,16 @@
 )
 
 			
-(defn on-add-to-analysis [from to name-values all-names func-string granularity-string graph colors chart add-to-table add-column statusbar server]
+(defn on-add-to-analysis [from to shift name-values all-names func-string granularity-string graph colors chart add-to-table add-column statusbar server]
   (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
 			    (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries))))
 	start-chart-notify (fn start-chart-notify [] (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
 			     (.setNotify chart true))
+
+	shift-time (if (= 0 shift)
+		     (fn [a] a)
+		     (fn [a] (with-keys-shifted a (fn [d] d) (fn [#^Date d] (Date. (+ (.getTime d) shift))))))
+		     
 	create-new-time-serie (fn [data-key identifier]
 				(let [serie (TimeSeries. identifier)
 				      color (colors)]
@@ -94,9 +99,10 @@
 				  
 				  (stop-chart-notify)
 				  (dorun (map (fn [data]
-						
-						
-						(let [data-key (assoc (key data) :type func-string :granularity granularity-string)
+						(let [data-key (let [dk (assoc (key data) :type func-string :granularity granularity-string)]
+								 (if (= 0 shift)
+								   dk
+								   (assoc dk :shifted-from (.format (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss") from))))
 						      make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
 						      data-values (make-double-values (val data))
 						      identifier (str data-key)
@@ -104,7 +110,7 @@
 								   serie
 								   (create-new-time-serie data-key identifier))
 						      data-from-serie (time-serie-to-sortedmap time-serie)
-						      data-with-new-data (merge data-from-serie data-values)
+						      data-with-new-data data-values;(merge data-from-serie data-values)
 						      nan-distance (condp = granularity-string
 								       "All Data" (* 30 1000)
 								       "Minute" (* 2 60 1000)
@@ -118,8 +124,11 @@
 										    (val i)))
 									  r)
 									temp-serie data-with-nans)]
+						 
+						    
 						  (.clear time-serie)
 						  (.addAndOrUpdate time-serie new-serie)))
+					;	  (.add time-serie new-serie)))
 					      data))
 				  (start-chart-notify))))]
     
@@ -130,12 +139,12 @@
 		 (dorun (map (fn [ e ]
 			       (swap! current inc) 
 			       (.setText statusbar (str "Retrieveing " @current " of " (count days)))
-			       (updatechart (get-data (first e)
+			       (updatechart (shift-time (get-data (first e)
 						      (second e)
 						      name-values
 						      func-string
 						      granularity-string
-						      server)))
+						      server))))
 			     days)))
 		 
 		 
@@ -150,13 +159,13 @@
 		 (dorun (map (fn [e]
 			(swap! current inc)
 			(.setText statusbar (str "Retrieveing " @current " of " (count names-of-interest)))
-			(updatechart (get-data from
+			(updatechart (shift-time (get-data from
 					       to
 					       (reduce (fn [v e]
 							 (conj v (key e) (val e))) [] e)
 					       func-string
 					       granularity-string
-					       server)))
+					       server))))
 		      
 		      names-of-interest))))
 
@@ -188,9 +197,20 @@
 			endd (.getTime (doto c
 					 (.setTime d)
 					 (.add Calendar/YEAR +1)))]
+		   (SplitDateSpinners. d endd startd ))
+	shift-model (let [d @(:from contents)
+			   
+			c (Calendar/getInstance)
+		     
+			startd (.getTime (doto c
+					   (.setTime d)
+					   (.add Calendar/YEAR -10)))
+			endd (.getTime (doto c
+					 (.setTime d)
+					 (.add Calendar/YEAR +1)))]
 		     (SplitDateSpinners. d endd startd ))		
 
-		granularity-combo (doto (JComboBox. (to-array ["All Data" "Minute" "Hour" "Day"]))
+	granularity-combo (doto (JComboBox. (to-array ["All Data" "Minute" "Hour" "Day"]))
 			    (.setEnabled false))
 
 	func-combo (let [c (JComboBox. (to-array ["Raw" "Average/Minute" "Average/Hour" "Average/Day"
@@ -232,7 +252,10 @@
 	all-names (atom [])
 	center-panel (atom (JPanel.))	
 	combomodels-on-center (atom {})
-
+	shift-check (doto (JCheckBox. "Shift start to:")
+		      (.addItemListener (proxy [ItemListener] []
+				    (itemStateChanged [e] (.enable shift-model (= ItemEvent/SELECTED (.getStateChange e)))))))
+		      
 	onAdd (fn [contents]
 		(reset! (:from contents) (.getDate from-model))
 		(reset! (:to contents) (.getDate to-model))
@@ -275,22 +298,26 @@
 					    true false)
 					 (= JOptionPane/YES_OPTION (JOptionPane/showConfirmDialog dialog "Are you sure, this appear to be a lot of data?" "Are you sure?" JOptionPane/YES_NO_OPTION))
 					 true)
-				     ))]
+				       ))]
 		  ;			
-		 (if (are-you-sure (.getTime from) (.getTime to) (.getSelectedItem func-combo) (.getSelectedItem granularity-combo))
-		   (on-add-to-analysis from
-				       to
-				    name-values
-				    @all-names
-				    (.getSelectedItem func-combo)
-				    (.getSelectedItem granularity-combo)
-				    (:time-series contents)
-				    (:colors contents)
-				    (:chart contents)
-				    (:add-to-table contents)
-				    (:add-column contents)
-				    (:status-label contents)
-				    server))))
+		  (when (are-you-sure (.getTime from) (.getTime to) (.getSelectedItem func-combo) (.getSelectedItem granularity-combo))
+		    (let [shift (if (.isSelected (.getModel shift-check))
+				  (- (.getTime (.getDate shift-model)) (.getTime from))
+				  0)]
+		    (on-add-to-analysis from
+					to
+					shift
+					name-values
+					@all-names
+					(.getSelectedItem func-combo)
+					(.getSelectedItem granularity-combo)
+					(:time-series contents)
+					(:colors contents)
+					(:chart contents)
+					(:add-to-table contents)
+					(:add-column contents)
+					(:status-label contents)
+					server)))))
 	
 	add (let [add (JButton. "Add")]
 	      (.setEnabled add false)
@@ -299,8 +326,11 @@
 			 (.setEnabled add false)
 			 add)
 	close (JButton. "Close")
-	]
 
+	
+    
+	]
+    
 
     (doto dialog
       (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
@@ -328,13 +358,17 @@
       (let [panel (JPanel.)
 	    from-panel (JPanel.)
 	    to-panel (JPanel.)
-	    update-panel (JPanel.)]
-	(. panel setLayout (BorderLayout.))
+	    update-panel (JPanel.)
+	    shift-panel (JPanel.)
+	    time-panel (JPanel.)]
+	
+	(. panel setLayout (BoxLayout. panel BoxLayout/PAGE_AXIS))
 	(. contentPane add panel BorderLayout/NORTH)
 	(doto panel
-	  (. add from-panel BorderLayout/NORTH)
-	  (. add to-panel BorderLayout/CENTER)
-	  (. add update-panel BorderLayout/SOUTH))
+	  (.add from-panel)
+	  (.add to-panel )
+	  (.add shift-panel)
+	  (.add update-panel))
 	(doto from-panel
 	  (.setLayout (FlowLayout. FlowLayout/TRAILING ))
 	  (.add (JLabel. "From date:"))
@@ -356,6 +390,18 @@
 	  (.add (.hourSpinner to-model))
 	  (.add (.minuteSpinner to-model))
 	  (.add (.secondSpinner to-model)))
+	(doto shift-panel 
+      	  (.setLayout (FlowLayout. FlowLayout/TRAILING ))
+	  (.add shift-check)
+	  (.add (.yearSpinner shift-model))
+	  (.add (.monthSpinner shift-model))
+	  (.add (.daySpinner shift-model))
+	  (.add (JLabel. "time:"))
+	  (.add (.hourSpinner shift-model))
+	  (.add (.minuteSpinner shift-model))
+	  (.add (.secondSpinner shift-model)))
+	(.enable shift-model false)
+	  
 	(.setLayout update-panel (FlowLayout. FlowLayout/TRAILING ))
 	  (.add update-panel (let [update (JButton. "Update")
 				   onUpdate (fn [] 

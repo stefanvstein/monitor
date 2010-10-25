@@ -142,6 +142,15 @@ public class SplitDateSpinners {
 		yearModel.setValue(calendar.get(Calendar.YEAR));
 	}
 
+    public void enable(boolean enabled){
+	secondSpinner.setEnabled(enabled);
+	minuteSpinner.setEnabled(enabled);
+	hourSpinner.setEnabled(enabled);
+	daySpinner.setEnabled(enabled);
+	monthSpinner.setEnabled(enabled);
+	yearSpinner.setEnabled(enabled);
+    }
+
 	public Date getDate() {
 		return calendar.getTime();
 	}
