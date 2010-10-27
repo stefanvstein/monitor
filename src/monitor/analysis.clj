@@ -102,7 +102,10 @@
 						(let [data-key (let [dk (assoc (key data) :type func-string :granularity granularity-string)]
 								 (if (= 0 shift)
 								   dk
-								   (assoc dk :shifted-from (.format (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss") from))))
+								   (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
+								     (assoc dk :shifted (str (.format df from) " to " (.format df
+															       (Date. (+ (.getTime from) shift))
+															       ))))))
 						      make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
 						      data-values (make-double-values (val data))
 						      identifier (str data-key)
@@ -110,7 +113,7 @@
 								   serie
 								   (create-new-time-serie data-key identifier))
 						      data-from-serie (time-serie-to-sortedmap time-serie)
-						      data-with-new-data data-values;(merge data-from-serie data-values)
+						      data-with-new-data (merge data-from-serie data-values)
 						      nan-distance (condp = granularity-string
 								       "All Data" (* 30 1000)
 								       "Minute" (* 2 60 1000)
