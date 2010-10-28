@@ -13,7 +13,10 @@
 	       (load (str "/" filename)))
 	     (println "You need to supply a config file" )))
 	 (when (= (first line) "linux")
-	   (if (next line)
-	     (serve-linux-proc (Integer/parseInt (second line)) 15)
+	   (if-let [port (second line)]
+	     (serve-linux-proc (Integer/parseInt port) 15 (if-let [pat (get (vec line) 2)]
+							     (re-pattern pat)
+							     nil))
+	     
 	     (println "You need to supply a listener port"))))
      (new-window true))))

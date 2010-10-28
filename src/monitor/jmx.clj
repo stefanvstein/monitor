@@ -20,7 +20,7 @@
 				    :server server 
 				    :host (. (. InetAddress getLocalHost) getCanonicalHostName)
 				    :runtime runtime
-				    :vmname (.getName runtime))))
+				    :vmname "Monitor")));(.getName runtime))))
 
 (def mbean-connections (atom #{*current-mbean-connection*}))
 

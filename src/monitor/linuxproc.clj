@@ -1,5 +1,5 @@
 (ns monitor.linuxproc
-  (:import (java.io BufferedReader FileReader InputStreamReader OutputStreamWriter PushbackReader))
+  (:import (java.io File FileFilter BufferedReader FileReader InputStreamReader OutputStreamWriter PushbackReader))
   (:import (java.util Date))
   (:import (java.util.concurrent Executors))
   (:import (java.util.concurrent.locks ReentrantLock))
@@ -8,6 +8,44 @@
   (:use (monitor database termination shutdown))
   (:use [clojure.contrib.logging :only [info]]))
 
+(defn interesting-pids
+  "returns seq of directories in proc for those pids with command line matching re"
+  [re]
+  (let [pids-in-proc
+	(seq (.listFiles (File. "/proc") (proxy [FileFilter] []
+					   (accept [file]
+						   (boolean (and
+							     (.isDirectory file)
+							     (re-matches #"^\d+$" (.getName file))))))))]
+    (filter (fn [file]
+	      (with-open [cmdline (BufferedReader. (FileReader. (File. file "cmdline")))]
+		(if-let [line (.readLine cmdline)]
+		  (re-matches re line)
+		  nil)))
+	    pids-in-proc)))
+
+(def pids-of-interest (atom []))
+
+(defn processes [re]
+  (let [pids-dirs (interesting-pids re)]
+
+    (println pids-dirs)
+    (dorun (map (fn [pid-dir] 
+    (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "stat")))]
+      (when-let [line (.readLine stat)]
+	(let [stats (vec (reverse (seq (.split line "\\s"))))
+	      rss (Long/parseLong (get stats 20))
+	      vsize (Long/parseLong (get stats 21))
+	      threads (Long/parseLong (get stats 24))
+	      cutime  (Long/parseLong (get stats 30))
+	      stime  (Long/parseLong (get stats 29))]
+	      
+	      
+	  
+	  (println stats)
+	  (println rss vsize threads cutime stime)))))
+		pids-dirs))
+  ))
 (defn net-dev-fn []
   (let [last-time (atom nil)
 	last-values (atom nil)
@@ -128,78 +166,110 @@
 (defn cpu-fn []
   (let [value-pattern #"^cpu(\d*)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+).*"
 	last-cpu (atom {})
-	last-time (atom nil)]
+	last-time (atom nil)
+	percent (fn [a sum] (if (zero? sum)
+			      0
+			      (double (* 100 (/ a sum)))))
+	cpu-jiffies (fn [total-new total-old]
+		      (let [user (- (:user total-new) (:user total-old))
+			    nice (- (:nice total-new) (:nice total-old))
+			    system (- (:system total-new) (:system total-old))
+			    idle (- (:idle total-new) (:idle total-old))
+			    iowait (- (:iowait total-new) (:iowait total-old))
+			    irq (- (:irq total-new) (:irq total-old))
+			    softirq (- (:softirq total-new) (:softirq total-old))
+			    sum (+ user nice system idle iowait irq softirq)]
+			{:user user :nice nice :system system :idle idle :iowait iowait :irq irq :softirq softirq :sum sum}))]
     (fn cpu []
       (let [stream (BufferedReader. (FileReader. "/proc/stat"))
-	    timestamp (System/currentTimeMillis)]
+	    timestamp (System/currentTimeMillis)
+	    pids-dirs @pids-of-interest]
 	(try
-	  (let [new-values (reduce (fn [r line]
-		    (cond
-		     (.startsWith line "ctxt") (assoc r :context-switches (Long/parseLong (.trim (.substring line 5))))
-					
-		     (.startsWith line "intr") (assoc r :interrupts (Long/parseLong (nth (re-matches #"intr\s+(\d+)\s+.*" line) 1)))
-					
-		     (.startsWith line "cpu") (let [m (re-matches value-pattern line)
-						    cpu (let [cpu (first (rest m))]
-							  (if (= "" cpu)
-							    "Total"
-							    cpu))
-						    
-						    user (Long/parseLong (nth m 2))
-						    nice (Long/parseLong (nth m 3))
-						    system (Long/parseLong (nth m 4))
-						    idle (Long/parseLong (nth m 5))
-						    iowait (Long/parseLong (nth  m 6))
-						    irq (Long/parseLong (nth m 7))
-						    softirq (Long/parseLong (nth m 8))]
-						(assoc r cpu {:user user
-							      :nice nice
-							      :system system
-							      :idle idle
-							      :iowait iowait
-							      :irq irq
-							      :softirq softirq}))))
-		  {} (filter #(or
-			       (.startsWith % "cpu")
-			       (.startsWith % "ctxt")
-			       (.startsWith % "intr"))
-			     (line-seq stream)))]
+	  (let [new-values (merge (reduce (fn [r line]
+					    (cond
+					     (.startsWith line "ctxt") (assoc r :context-switches (Long/parseLong (.trim (.substring line 5))))
+					     
+					     (.startsWith line "intr") (assoc r :interrupts (Long/parseLong (nth (re-matches #"intr\s+(\d+)\s+.*" line) 1)))
+					     
+					     (.startsWith line "cpu") (let [m (re-matches value-pattern line)
+									    cpu (let [cpu (first (rest m))]
+										  (if (= "" cpu)
+										    "Total"
+										    cpu))
+									    
+									    user (Long/parseLong (nth m 2))
+									    nice (Long/parseLong (nth m 3))
+									    system (Long/parseLong (nth m 4))
+									    idle (Long/parseLong (nth m 5))
+									    iowait (Long/parseLong (nth  m 6))
+									    irq (Long/parseLong (nth m 7))
+									    softirq (Long/parseLong (nth m 8))]
+									(assoc r cpu {:user user
+										      :nice nice
+										      :system system
+										      :idle idle
+										      :iowait iowait
+										      :irq irq
+										      :softirq softirq}))))
+					  {} (filter #(or
+						       (.startsWith % "cpu")
+						       (.startsWith % "ctxt")
+						       (.startsWith % "intr"))
+						     (line-seq stream)))
+				  (reduce (fn [r pid-dir]
+					    (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "stat")))]
+					      (if-let [line (.readLine stat)]
+						(let [s (seq (.split line "\\s"))
+						      stats (vec (reverse s))
+						      rss (Long/parseLong (get stats 20))
+						      vsize (Long/parseLong (get stats 21))
+						      threads (Long/parseLong (get stats 24))
+						      cutime  (Long/parseLong (get stats 30))
+						      stime  (Long/parseLong (get stats 29))]
+						  (assoc r (Integer/parseInt (first s)) {:user cutime :system stime}))
+						  r))) {} pids-dirs))]
 	    (try
-	      (reduce (fn [r e]
-			(cond
-			 (= String (class (key e)))
-			 (if-let [l (get @last-cpu (key e))]
-			   (if-let [cur (val e)]
-			   (let [user (- (:user cur) (:user l))
-				 nice (- (:nice cur) (:nice l))
-				 system (- (:system cur) (:system l))
-				 idle (- (:idle cur) (:idle l))
-				 iowait (- (:iowait cur) (:iowait l))
-				 irq (- (:irq cur) (:irq l))
-				 softirq (- (:softirq cur) (:softirq l))
-				 sum (+ user nice system idle iowait irq softirq)
-				 p (fn [a ] (if (zero? sum)
-					      0
-					      (double (* 100 (/ a sum)))))]
-			     
-			     (assoc r (key e) {"user" (p user)
-					   "nice" (p nice)
-					   "system" (p system)
-					   "idle" (p idle)
-					   "iowait" (p iowait)
-					   "irq" (p irq)
-					   "softirq" (p softirq)})
-			     )r ) r)
-			 (= :context-switches (key e)) (if-let [l (:context-switches @last-cpu)]
-							 (let [seconds (/ (- timestamp @last-time) 1000.0)]
-							   (assoc r "context switches/s" (/ (- (val e) l) seconds)))
-							 r)
-			 (= :interrupts (key e)) (if-let [l (:interrupts @last-cpu)]
-							 (let [seconds (/ (- timestamp @last-time) 1000.0)]
-							   (assoc r "interrupts/s" (/ (- (val e) l) seconds)))
-							 r)
-			 :else r)
-	      ) {} new-values)
+	      (let [system (reduce (fn [r e]
+				     (cond
+				      (= String (class (key e)))
+				      (if-let [l (get @last-cpu (key e))]
+					(if-let [cur (val e)]
+					  (let [jiffies (cpu-jiffies cur l)
+						{sum :sum} jiffies]
+					    (assoc r (key e) {"user" (percent (:user jiffies) sum)
+							      "nice" (percent (:nice jiffies) sum)
+							      "system" (percent (:system jiffies) sum)
+							      "idle" (percent (:idle jiffies) sum)
+							      "iowait" (percent (:iowait jiffies) sum)
+							      "irq" (percent (:irq jiffies) sum)
+							      "softirq" (percent (:softirq jiffies) sum)})
+					    )r ) r)
+				      (= :context-switches (key e)) (if-let [l (:context-switches @last-cpu)]
+								      (let [seconds (/ (- timestamp @last-time) 1000.0)]
+									(assoc r "context switches/s" (/ (- (val e) l) seconds)))
+								      r)
+				      (= :interrupts (key e)) (if-let [l (:interrupts @last-cpu)]
+								(let [seconds (/ (- timestamp @last-time) 1000.0)]
+								  (assoc r "interrupts/s" (/ (- (val e) l) seconds)))
+								r)
+				      :else r))
+				   {} new-values)
+		    pids (let [total-new (get new-values "Total")
+			       total-old (get @last-cpu "Total")]
+			   (if total-old
+			     (let [{sum :sum} (cpu-jiffies total-new total-old)]
+			       
+			       (reduce (fn [r e] r
+					 (if (= Integer (class (key e)))
+					   (if-let [l (get @last-cpu (key e))]
+					     (let [user (percent (- (:user (val e)) (:user l)) sum)
+						   system (percent (- (:system (val e)) (:system l)) sum)]
+					       (assoc r (key e) (assoc {} "user" user "system" system "total" (+ system user))))
+					     r)
+					   r)) {} new-values))
+			     {}))]
+		(merge system {"process" pids}))
+		     
 	      (finally
 	       (reset! last-time timestamp)
 	       (reset! last-cpu new-values))))
@@ -323,7 +393,9 @@
 				       (let [name (let [names (key e)]
 						    (if (= 4 (count names))
 						      (zipmap [:host :category :instance :counter] names)
-						      (zipmap [:host :category :counter] names)))]
+						      (if (= 5 (count names))
+							(zipmap [:host :category :instance :pid :counter] names)							
+						      (zipmap [:host :category :counter] names))))]
 					 (add-data name timestamp (val e))))
 				     d))))
 		     data)))
@@ -353,10 +425,12 @@
 	    
 
 
-(defn serve-linux-proc [port frequency]
+(defn serve-linux-proc [port frequency re]
   (when (not (System/getProperty "nogui"))
     (shutdown-button "Monitor Linux proc Agent"))
   (shutdown-jmx "monitor.linuxproc")
+  (when re
+    (info (str "Looking for processes where command line matches regular expression: " (.pattern re))))
   (let [server (ServerSocket. port)
 	net-dev (net-dev-fn)
 	disk (disk-fn)
@@ -380,6 +454,8 @@
     (.shutdown accept-executor)
 
     (loop [tim (Date.)]
+      (when re
+	(reset! pids-of-interest (interesting-pids re)))
       (let [text (to-text net-dev disk cpu)]
 	(dorun (map (fn [s]
 		      (try

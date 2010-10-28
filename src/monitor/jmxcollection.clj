@@ -215,24 +215,26 @@
   ([stop-fn threads?]
   (let [collector-fns (collector-keys (mbean-server))
 	mem-fns (memory-fns (mbean-server))
-	thread-beans (thread-bean (mbean-server))]
+	thread-beans (thread-bean (mbean-server))
+	pid (remote-pid)]
     (while (not (stop-fn))
 	   (let [the-time (remote-time)]
 
 	     (dorun (map (fn [i]  
-			   (add-data (key i) the-time (val i))) 
+			   (add-data (assoc (key i) :pid pid) the-time (val i))) 
 			 (collector-values collector-fns (mbean-server))))
 	     (dorun (map (fn [i]  
-			   (add-data (key i) the-time (val i))) 
+			   (add-data (assoc (key i) :pid pid) the-time (val i))) 
 			 (memory-values mem-fns (mbean-server))))
-	     
+
 	       (dorun (map (fn [i]  
-			     (add-data (key i) the-time (val i) threads?)) 
+			     (add-data (assoc (key i) :pid pid) the-time (val i) threads?)) 
 			   (thread-info thread-beans)))
 
 	     (add-data 
 	      {:host (remote-hostname) 
-	       :jvm (vmname) 
+	       :jvm (vmname)
+	       :pid pid
 	       :category "Runtime" 
 	       :counter "UpTime"}
 		  the-time (double (remote-uptime TimeUnit/SECONDS))))))))
