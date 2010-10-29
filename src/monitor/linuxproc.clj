@@ -30,22 +30,26 @@
   (let [pids-dirs (interesting-pids re)]
 
     (println pids-dirs)
-    (dorun (map (fn [pid-dir] 
-    (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "stat")))]
-      (when-let [line (.readLine stat)]
-	(let [stats (vec (reverse (seq (.split line "\\s"))))
-	      rss (Long/parseLong (get stats 20))
-	      vsize (Long/parseLong (get stats 21))
-	      threads (Long/parseLong (get stats 24))
-	      cutime  (Long/parseLong (get stats 30))
-	      stime  (Long/parseLong (get stats 29))]
-	      
-	      
-	  
-	  (println stats)
-	  (println rss vsize threads cutime stime)))))
-		pids-dirs))
-  ))
+    (doall (map (fn [pid-dir] 
+		  (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "smaps")))]
+		    (let [data (loop [size 0 shared 0 private 0 resident 0 swapped 0 lines (line-seq stat)]
+		      (if-let [line (first lines)]
+			(cond
+			 (.startsWith line "Size:")
+			 (recur (+ size (Long/parseLong (second (.split #"\s+" line)))) shared private resident swapped (next lines))
+			    (.startsWith line "Shared")
+			    (recur size (+ shared (Long/parseLong (second (.split #"\s+" line)))) private resident swapped (next lines))
+			    (.startsWith line "Private")
+			    (recur size shared (+ private (Long/parseLong (second (.split #"\s+" line)))) resident swapped (next lines))
+			    (.startsWith line "Swap")
+			    (recur size shared private resident (+ swapped (Long/parseLong (second (.split #"\s+" line)))) (next lines))
+			    (.startsWith line "Rss")
+			    (recur size shared private (+  resident (Long/parseLong (second (.split #"\s+" line)))) swapped (next lines))
+			    :else (recur size shared private resident swapped (next lines))
+			    )
+			   {:shared shared :private private :size size :resident resident :swapped swapped}))]
+		      {pid-dir data}))) pids-dirs))))
+
 (defn net-dev-fn []
   (let [last-time (atom nil)
 	last-values (atom nil)
