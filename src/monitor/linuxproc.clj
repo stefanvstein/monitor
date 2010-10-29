@@ -26,29 +26,6 @@
 
 (def pids-of-interest (atom []))
 
-(defn processes [re]
-  (let [pids-dirs (interesting-pids re)]
-
-    (println pids-dirs)
-    (doall (map (fn [pid-dir] 
-		  (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "smaps")))]
-		    (let [data (loop [size 0 shared 0 private 0 resident 0 swapped 0 lines (line-seq stat)]
-		      (if-let [line (first lines)]
-			(cond
-			 (.startsWith line "Size:")
-			 (recur (+ size (Long/parseLong (second (.split #"\s+" line)))) shared private resident swapped (next lines))
-			    (.startsWith line "Shared")
-			    (recur size (+ shared (Long/parseLong (second (.split #"\s+" line)))) private resident swapped (next lines))
-			    (.startsWith line "Private")
-			    (recur size shared (+ private (Long/parseLong (second (.split #"\s+" line)))) resident swapped (next lines))
-			    (.startsWith line "Swap")
-			    (recur size shared private resident (+ swapped (Long/parseLong (second (.split #"\s+" line)))) (next lines))
-			    (.startsWith line "Rss")
-			    (recur size shared private (+  resident (Long/parseLong (second (.split #"\s+" line)))) swapped (next lines))
-			    :else (recur size shared private resident swapped (next lines))
-			    )
-			   {:shared shared :private private :size size :resident resident :swapped swapped}))]
-		      {pid-dir data}))) pids-dirs))))
 
 (defn net-dev-fn []
   (let [last-time (atom nil)
@@ -295,21 +272,22 @@
 	  mapped-p #"^Mapped:\s+(\d+)\s+kB.*"
 	  writeback-p #"^Writeback:\s+(\d+)\s+kB.*"
 	  inactive-p #"^Inactive:\s+(\d+)\s+kB.*"
-	  patterns (assoc (sorted-map) :total-mem memtotal-p
-			  :free-mem memfree-p
-			  :buffers buffers-p
-			  :cached cached-p
-			  :swap-cache swap-cache-p
-			  :active active-p
-			  :dirty dirty-p
-			  :total-low low-total-p
-			  :free-low low-free-p
-			  :swap-total swap-total-p
-			  :swap-free swap-free-p
-			  :mapped mapped-p
-			  :slab slab-p
-			  :inactive inactive-p
-			  :writeback writeback-p)
+	  patterns (assoc (sorted-map)
+		     :total-mem memtotal-p
+		     :free-mem memfree-p
+		     :buffers buffers-p
+		     :cached cached-p
+		     :swap-cache swap-cache-p
+		     :active active-p
+		     :dirty dirty-p
+		     :total-low low-total-p
+		     :free-low low-free-p
+		     :swap-total swap-total-p
+		     :swap-free swap-free-p
+		     :mapped mapped-p
+		     :slab slab-p
+		     :inactive inactive-p
+		     :writeback writeback-p)
 	  patterns-left (atom patterns)
 	  stream (BufferedReader. (FileReader. "/proc/meminfo"))]
       (try
@@ -346,7 +324,34 @@
 	      (swap! result #(assoc % "slab" (:slab values))))
 	    (when-let [slab (:mapped values)]
 	      (swap! result #(assoc % "mapped" (:mapped values))))
-	    @result))
+	    
+	    (let [processes (assoc {}
+			      "process"
+			      (reduce (fn [r pid-dir]
+					(with-open [stat (BufferedReader. (FileReader. (File. pid-dir "smaps")))]
+					  (let [data (loop [size 0 shared 0 private 0 resident 0 swapped 0 lines (line-seq stat)]
+						       (if-let [line (first lines)]
+							 (cond
+							  (.startsWith line "Pss:")
+							  (recur (+ size (Long/parseLong (second (.split #"\s+" line)))) shared private resident swapped (next lines))
+							  (.startsWith line "Shared")
+							  (recur size (+ shared (Long/parseLong (second (.split #"\s+" line)))) private resident swapped (next lines))
+							  (.startsWith line "Private")
+							  (recur size shared (+ private (Long/parseLong (second (.split #"\s+" line)))) resident swapped (next lines))
+							  (.startsWith line "Swap")
+							  (recur size shared private resident (+ swapped (Long/parseLong (second (.split #"\s+" line)))) (next lines))
+							  (.startsWith line "Rss")
+							  (recur size shared private (+  resident (Long/parseLong (second (.split #"\s+" line)))) swapped (next lines))
+							  :else (recur size shared private resident swapped (next lines))
+							  )
+							 {"shared" shared "private" private "proportional" size "resident" resident "swapped" swapped}))]
+					    (assoc r (Integer/parseInt (.getName pid-dir))
+						   data)))
+					
+					) {} @pids-of-interest))]
+	      (if-not (empty? (get processes "process"))
+		(merge @result processes)
+		@result))))
       (finally
        (.close stream)))))
 
