@@ -112,27 +112,33 @@
 						    (rest row)))) 
 				    combinations) ]
 
-     (persistent! (reduce (fn [result names-and-data-for-a-day]
+      (persistent! (reduce (fn [result names-and-data-for-a-day]
+			     (try
 	       (if-let [data-added 
 			(apply 
-			 get-from-db (fn [data-seq] 
-					(reduce (fn [d h]
-						  (let [#^Date timestamp (first (next h))
-							timestamp-long (.getTime timestamp)]
-						    
-						    (if (and (> timestamp-long lower-long)
-							     (< timestamp-long upper-long))
-						      (transient-add d 
-							   (first h) 
-							   timestamp 
-							   (first(nnext h)))
-						      d))) 
+			 get-from-db (fn [data-seq]
+				       (reduce (fn [d h]
+						 (reduce (fn [d2 h1]
+							   (let [#^Date timestamp (key h1)
+								 timestamp-long (.getTime timestamp)]
+							     
+							     (if (and (> timestamp-long lower-long)
+								      (< timestamp-long upper-long))
+							       (transient-add d2 
+									      (first h) 
+									      timestamp 
+									      (val h1))
+							       d2)))
+							 d
+							 (second h)))
 						result
 						data-seq))
 			 (day-as-int (first names-and-data-for-a-day))
 			 (rest names-and-data-for-a-day))]
 		 data-added 
-		 result))
+		 result)
+	       (catch Exception e
+		 (.printStackTrace e))))
 	     (transient {}) 
 	     combinations-vectors))))))
 

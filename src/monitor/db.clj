@@ -26,6 +26,7 @@
 (def dayname-cache (atom nil))
 (def all-days (atom #{}))
 
+(comment
 (defn- time-stamp-of [bytes]
   (.getLong (ByteBuffer/wrap bytes)))
 
@@ -43,6 +44,28 @@
 
 (defn- instance-index-of [bytes]
   (.getInt (ByteBuffer/wrap bytes) 29))
+
+)
+
+(defn- time-stamp-of [bytes]
+  (let [buffer (ByteBuffer/wrap bytes)
+	position (+ 18 (* 4 (int (.get buffer 17))))]
+  (.getLong buffer position)))
+
+(defn- host-index-of [bytes]
+  (.getInt (ByteBuffer/wrap bytes) 1))
+
+
+(defn- category-index-of [bytes]
+  (.getInt (ByteBuffer/wrap bytes) 5))
+
+
+(defn- counter-index-of [bytes]
+  (.getInt (ByteBuffer/wrap bytes) 9))
+
+
+(defn- instance-index-of [bytes]
+  (.getInt (ByteBuffer/wrap bytes) 13))
    
 
 (def index-keywords-and-creators (zipmap 
@@ -137,7 +160,9 @@
                   (= 0 (rem (.numerator r) (.denominator r))))
    :else        false))
 
-(defn- to-bytes [day value time-stamp index-data]
+
+
+(defn- ol-to-bytes [day value time-stamp index-data]
   (let [array-stream (ByteArrayOutputStream.)
 	data-out (DataOutputStream. array-stream)
 	the-day (get-day day)]
@@ -162,8 +187,66 @@
     (.close data-out)
     (.toByteArray array-stream)))
 
+(defn- to-bytes
+  ([day value time-stamp index-data]
+  (let [array-stream (ByteArrayOutputStream.)
+	data-out (DataOutputStream. array-stream)
+	the-day (get-day day)]
+    (.writeByte data-out 1)
+    (.writeInt data-out (index-for-name day (:host index-data)))
+    (.writeInt data-out (index-for-name day (:category index-data)))
+    (.writeInt data-out (index-for-name day (:counter index-data)))
+    (.writeInt data-out (index-for-name day (:instance index-data)))
+    (let [others (count (dissoc index-data :host :category :counter :instance))]
+					;(println "*<-" index-data "*" others)
+      (.writeByte data-out others)
+      (when (< 0 others)
+	(dorun (map (fn [e] 
+		      (.writeInt data-out (index-for-name day (name (key e))))
+		      (.writeInt data-out (index-for-name day (val e))))
+		    (dissoc index-data :host :category :counter :instance)))))
 
-(defn- from-bytes [bytes day]
+    (.writeLong data-out (.getTime #^Date time-stamp))
+    (if (integral? value)
+      (do (.writeByte data-out 1)
+	  (.writeLong data-out (long value)))
+      (do (.writeByte data-out 2)
+	  (.writeDouble data-out (double value))))
+    (.close data-out)
+    (.toByteArray array-stream)))
+
+  ([day time-and-values index-data]
+     (let [array-stream (ByteArrayOutputStream.)
+	   data-out (DataOutputStream. array-stream)
+	   the-day (get-day day)]
+       (.writeByte data-out 2)
+       (.writeInt data-out (index-for-name day (:host index-data)))
+       (.writeInt data-out (index-for-name day (:category index-data)))
+       (.writeInt data-out (index-for-name day (:counter index-data)))
+       (.writeInt data-out (index-for-name day (:instance index-data)))
+       (let [others (count (dissoc index-data :host :category :counter :instance))]
+	 (.writeByte data-out others)
+	 (when (< 0 others)
+	   (dorun (map (fn [e] 
+			 (.writeInt data-out (index-for-name day (name (key e))))
+			 (.writeInt data-out (index-for-name day (val e))))
+		       (dissoc index-data :host :category :counter :instance)))))
+       (.writeInt (count time-and-values))
+       (dorun (map (fn [e]
+		     (.writeLong data-out (.getTime #^Date (key e)))
+		     (let [value (val e)]
+		       (if (integral? value)
+			 (do (.writeByte data-out 1)
+			     (.writeLong data-out (long value)))
+			 (do (.writeByte data-out 2)
+			     (.writeDouble data-out (double value))))
+		       ) time-and-values)))
+       (.close data-out)
+       (.toByteArray array-stream)
+  )))
+
+
+(defn- ol-from-bytes [bytes day]
   (let [buffer (ByteBuffer/wrap bytes)
 	timestamp (Date. (.getLong buffer))
 	value-type (int (.get buffer))
@@ -200,6 +283,56 @@
       [r timestamp value])]
       ;(println "*->" res "*" additional)
       res)))
+
+(defn- from-bytes [bytes day]
+  (let [buffer (ByteBuffer/wrap bytes)
+	format (int (.get buffer))]
+    (if (>= 2 format)
+      
+      (let [
+	    host (name-for-index day (.getInt buffer))
+	    category (name-for-index day (.getInt buffer))
+	    counter (name-for-index day (.getInt buffer))
+	    instance (name-for-index day (.getInt buffer))
+	    additional (int (.get buffer))
+	    
+	    r (reduce #(if (second %2)
+			 (assoc %1 (first %2) (second %2))
+			 %1)
+		      {}
+		      [[:host host] 
+		       [:counter counter] 
+		       [:category category] 
+		       [:instance instance]])
+	    res (if (< 0 additional)
+		  (loop [i 0 v r]
+		    (if (< i additional)
+		      (recur (inc i) 
+			     (assoc v 
+			       (keyword (name-for-index day (.getInt buffer))) 
+			       (name-for-index day (.getInt buffer))))
+		      v))
+		  r)]
+	(if (= 1 format)
+	    (let [timestamp (Date. (.getLong buffer))
+	    
+		  value-type (int (.get buffer))
+		  value (if (= 1 value-type)
+			  (.getLong buffer)
+			  (.getDouble buffer))]
+	      [res {timestamp value}])
+	    (let [num (.readInt buffer)
+		  time-and-values (reduce (fn [r i]
+					    (let [timestamp (Date. (.getLong buffer))
+						  value-type (int (.get buffer))
+						  value (if (= 1 value-type)
+							  (.getLong buffer)
+							  (.getDouble buffer))]
+					      (assoc r timestamp value)))
+					    (sorted-map) (range num))]
+	      [res (into (sorted-map) time-and-values)]))))))
+
+    
 
 (defn- causes [e] 
   (take-while #(not (nil? %)) 
@@ -501,7 +634,8 @@
 						(let [ne (db-join-cursor-next jo)]
 						  (if (empty? ne)
 						    nil
-						    (lazy-seq (cons (from-bytes (second ne) *day*) (p jo))))))]
+						    (let [data (from-bytes (second ne) *day*)]
+							(lazy-seq (cons data (p jo)))))))]
 					(reset! r (fun (p join))))))
 				  (finally (close-cursors cursors)))
 				 (reset! failed false))
