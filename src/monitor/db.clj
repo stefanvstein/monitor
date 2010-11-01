@@ -160,33 +160,6 @@
                   (= 0 (rem (.numerator r) (.denominator r))))
    :else        false))
 
-
-
-(defn- ol-to-bytes [day value time-stamp index-data]
-  (let [array-stream (ByteArrayOutputStream.)
-	data-out (DataOutputStream. array-stream)
-	the-day (get-day day)]
-    (.writeLong data-out (.getTime #^Date time-stamp))
-    (if (integral? value)
-      (do (.writeByte data-out 1)
-	  (.writeLong data-out (long value)))
-      (do (.writeByte data-out 2)
-	  (.writeDouble data-out (double value))))
-    (.writeInt data-out (index-for-name day (:host index-data)))
-    (.writeInt data-out (index-for-name day (:category index-data)))
-    (.writeInt data-out (index-for-name day (:counter index-data)))
-    (.writeInt data-out (index-for-name day (:instance index-data)))
-    (let [others (count (dissoc index-data :host :category :counter :instance))]
-      ;(println "*<-" index-data "*" others)
-      (.writeByte data-out others)
-      (when (< 0 others)
-	(dorun (map (fn [e] 
-		      (.writeInt data-out (index-for-name day (name (key e))))
-		      (.writeInt data-out (index-for-name day (val e))))
-		    (dissoc index-data :host :category :counter :instance)))))
-    (.close data-out)
-    (.toByteArray array-stream)))
-
 (defn- to-bytes
   ([day value time-stamp index-data]
   (let [array-stream (ByteArrayOutputStream.)
@@ -231,7 +204,7 @@
 			 (.writeInt data-out (index-for-name day (name (key e))))
 			 (.writeInt data-out (index-for-name day (val e))))
 		       (dissoc index-data :host :category :counter :instance)))))
-       (.writeInt (count time-and-values))
+       (.writeInt data-out (count time-and-values))
        (dorun (map (fn [e]
 		     (.writeLong data-out (.getTime #^Date (key e)))
 		     (let [value (val e)]
@@ -244,45 +217,6 @@
        (.close data-out)
        (.toByteArray array-stream)
   )))
-
-
-(defn- ol-from-bytes [bytes day]
-  (let [buffer (ByteBuffer/wrap bytes)
-	timestamp (Date. (.getLong buffer))
-	value-type (int (.get buffer))
-	value (if (= 1 value-type)
-		(.getLong buffer)
-		(.getDouble buffer))
-	host (name-for-index day (.getInt buffer))
-	category (name-for-index day (.getInt buffer))
-	counter (name-for-index day (.getInt buffer))
-	instance (name-for-index day (.getInt buffer))
-	additional (int (.get buffer))
-	r (reduce #(if (second %2)
-		     (assoc %1 (first %2) (second %2))
-		     %1)
-		  {}
-		  [[:host host] 
-		   [:counter counter] 
-		   [:category category] 
-		   [:instance instance]])]
-;	r (assoc {} 
-;	    :host host 
-;	    :counter counter 
-;	    :category category 
-;	    :instance instance)]
-    
-    (let [res (if (< 0 additional)
-      (loop [i 0 v r]
-	(if (< i additional)
-	  (recur (inc i) 
-		 (assoc v 
-		   (keyword (name-for-index day (.getInt buffer))) 
-		   (name-for-index day (.getInt buffer))))
-	  [v timestamp value]))
-      [r timestamp value])]
-      ;(println "*->" res "*" additional)
-      res)))
 
 (defn- from-bytes [bytes day]
   (let [buffer (ByteBuffer/wrap bytes)
@@ -321,7 +255,7 @@
 			  (.getLong buffer)
 			  (.getDouble buffer))]
 	      [res {timestamp value}])
-	    (let [num (.readInt buffer)
+	    (let [num (.getInt buffer)
 		  time-and-values (reduce (fn [r i]
 					    (let [timestamp (Date. (.getLong buffer))
 						  value-type (int (.get buffer))
@@ -680,6 +614,13 @@
   (let [tmp (make-temp-dir)
 	df (SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)
+	get-values  (fn [e] (reduce (fn [a b]
+				      (reduce (fn [a1 b1]
+						(conj a1 (val b1)))
+					      a
+					      (second b)))
+				    []
+				    e))
 	printod (fn printod []
 		  (println "....start")
 		  (when (not (=(count (keys @opened-data)) (count (set (vals @opened-data)))))
@@ -706,37 +647,35 @@
 			      (release-db 20070101))
 			    (is (= [2 3 4]
 				 (doall (get-from-db 
-				  #(reduce (fn [a b]
-					     (conj a (nth b 2))) [] %) 
-				  20070101 
-				  :category "Olof" :counter "Gustav" :host "Adam" ))))
+					 get-values
+					 20070101 
+					 :category "Olof" :counter "Gustav" :host "Adam" ))))
 
 			    (is (= [8]
 				 (doall (get-from-db 
-				  #(reduce (fn [a b] (conj a (nth b 2))) [] %) 
+				get-values
 				  20070102 
 				  :category "Olof" :counter "Gustav" :host "Adam" ))))
 
 			    (is (= [8]
 				 (doall (get-from-db 
-				  #(reduce (fn [a b] (conj a (nth b 2))) [] %) 
+					 get-values
 				  20070102 
 				  :category "Olof" :counter "Gustav" :host "Adam" ))))
 
 
 			    (is (nil? (doall (get-from-db 
-					   #(reduce (fn [a b] (conj a (nth b 2))) [] %) 
-
-				      20070103 
-				  :category "Olof" :counter "Gustav" :host "Adam" ))))
-
+					      get-values
+					      20070103 
+					      :category "Olof" :counter "Gustav" :host "Adam" ))))
+			    
 			    (is (nil? (doall (get-from-db 
-					   #(reduce (fn [a b] (conj a (nth b 2))) [] %) 
-
-				      20070101 
-				  :category "Guilla" :counter "Gustav" :host "Adam" ))))
+					      get-values
+					      20070101 
+					      :category "Guilla" :counter "Gustav" :host "Adam" ))))
 
 			    (is (= #{20070101 20070102} (set (all-dates))))
+			    
 			    (is (= #{{:instance "Nisse", :counter "Gustav", :category "Olof"} 
 				     {:host "Adam",   :instance "Nisse", :counter "Gustav", :category "Olof"} 
 				     {:host "Bertil", :instance "Nisse", :counter "Gustav", :category "Olof"}}
@@ -749,22 +688,20 @@
 			    (is (= #{20070101} (set (days-with-data))))
 			    (is (nil?
 				 (doall (get-from-db 
-					 #(reduce (fn [a b] (conj a (nth b 2))) [] %) 
+					 get-values
 					 20070102 
 					 :category "Olof" :counter "Gustav" :host "Adam" ))))
 			    (is (= [2 3 4]
 				 (doall (get-from-db 
-				  #(reduce (fn [a b]
-					     (conj a (nth b 2))) [] %) 
-				  20070101 
-				  :category "Olof" :counter "Gustav" :host "Adam" ))))
+					 get-values
+					 20070101 
+					 :category "Olof" :counter "Gustav" :host "Adam" ))))
 
 			    (using-day 20070101
 				       (remove-date 20070101))
 			    (is (= [2 3 4]
 				   (doall (get-from-db 
-					   #(reduce (fn [a b]
-						      (conj a (nth b 2))) [] %) 
+					   get-values
 					   20070101 
 					   :category "Olof" :counter "Gustav" :host "Adam" ))))
 
@@ -773,8 +710,7 @@
 			    (is (= #{} (set (days-with-data))))
 			    (is (nil?
 				 (doall (get-from-db 
-					 #(reduce (fn [a b]
-						    (conj a (nth b 2))) [] %) 
+					 get-values
 					 20070101 
 					 :category "Olof" :counter "Gustav" :host "Adam" ))))
 			    (remove-date 20070101)
@@ -783,14 +719,12 @@
 			    (is (= #{20070101} (set (days-with-data))))
 			    (is (nil?
 				   (doall (get-from-db 
-					   #(reduce (fn [a b]
-						      (conj a (nth b 2))) [] %) 
+					   get-values
 					   20070101 
 					   :category "Olof" :counter "Gustav" :host "Adam" ))))
 			    (is (= [5]
 				   (doall (get-from-db 
-					   #(reduce (fn [a b]
-						      (conj a (nth b 2))) [] %) 
+					   get-values
 					   20070101 
 					   :host "Bertil" ))))
 			    (remove-date 20070101)
@@ -976,18 +910,18 @@
 	 (using-db-env tmp
 		       (let [bytes (to-bytes 20071126 23 (.parse df "20071126 033332") data )] 
 			 (is (= data (first (from-bytes bytes 20071126))))
-			 (is (= 23.0 (nth (from-bytes bytes 20071126) 2)))
+			 (is (= 23.0 (val (first (second (from-bytes bytes 20071126))))))
 			 (let [another-bytes (to-bytes 20071125 2 (.parse df "20071125 033332") another-data )]
-			   (is (= 23.0 (nth (from-bytes bytes 20071126) 2)))
-			   (is (= 2.0 (nth (from-bytes another-bytes 20071125) 2)))
-			   (is (= 23.0 (nth (from-bytes bytes 20071126) 2)))
+			   (is (= 23.0 (val (first (second (from-bytes bytes 20071126))))))
+			   (is (= 2.0 (val (first (second (from-bytes another-bytes 20071125))))))
+			   (is (= 23.0 (val (first (second (from-bytes bytes 20071126))))))
 			   (is (= another-data (first (from-bytes another-bytes 20071125))))
 			   (let [some-more-bytes (to-bytes 20071125 3.0 (.parse df "20071125 033332") some-more-data )]
-			     (is (= 2.0 (nth (from-bytes another-bytes 20071125) 2)))
-			     (is (= 3.0 (nth (from-bytes some-more-bytes 20071125) 2)))
-			     (is (= 23.0 (nth (from-bytes bytes 20071126) 2)))
-			     (is (= 2.0 (nth (from-bytes another-bytes 20071125) 2)))
-			     (is (= 3.0 (nth (from-bytes some-more-bytes 20071125) 2)))
+			     (is (= 2.0 (val (first (second (from-bytes another-bytes 20071125))))))
+			     (is (= 3.0 (val (first (second (from-bytes some-more-bytes 20071125))))))
+			     (is (= 23.0 (val (first (second (from-bytes bytes 20071126))))))
+			     (is (= 2.0 (val (first (second (from-bytes another-bytes 20071125))))))
+			     (is (= 3.0 (val (first (second (from-bytes some-more-bytes 20071125))))))
 			     (is (= #{0 1 2 3 4 5} 
 				    (set (for [x [bytes another-bytes some-more-bytes] 
 					       y [host-index-of category-index-of counter-index-of instance-index-of]]
@@ -1012,7 +946,7 @@
 			 (is (= some-more-data (first (from-bytes some-more-bytes 20071125))))
 			 (let [bytes (to-bytes 20071126 23 (.parse df "20071126 033332") data )]
 			   (is (= data (first (from-bytes bytes 20071126))))
-			   (is (= 23.0 (nth (from-bytes bytes 20071126) 2))))
+			   (is (= 23.0 (val (first (second (from-bytes bytes 20071126)))))))
 			 
 			 ))))
      (finally (rmdir-recursive tmp)))))
