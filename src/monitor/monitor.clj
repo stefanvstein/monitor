@@ -48,7 +48,7 @@
 					(java.util.Date. (- (System/currentTimeMillis) 
 							    (* history-days 24 1000 60 60)))))))))
 				 
-		  (serve-clients 0 client-port terminating?
+		  (serve-clients (+ client-port 1) client-port terminating?
 				 (serve))))
       (println "Done"))		    
   
