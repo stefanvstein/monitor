@@ -26,38 +26,39 @@
   [names add-buttons]
   (let [center-panel (doto (JPanel.)
 		       (.setLayout  (GridBagLayout.)))
-	combos-and-models (loop [combos [] models {} names names]
-			    (let [a-name (first names)
-				  field-name (name (key a-name))
-				  label (JLabel. field-name JLabel/RIGHT)
-				  combo-model (DefaultComboBoxModel. (to-array (cons "" (reduce (fn [toadd i]
-												  (if-let [a-value ((key a-name) i)]
-												    (conj toadd a-value)
-												    toadd))
-												#{}
-												(val a-name)))))
-				  combo (doto (JComboBox. combo-model)
-					  (.setName field-name))]
-			      (doto center-panel
-				(.add label (GridBagConstraints. 
-					     0 GridBagConstraints/RELATIVE 
-					     1 1 
-					     0 0 
-					     GridBagConstraints/EAST 
-					     GridBagConstraints/NONE 
-					     (Insets. 1 1 0 4) 
-					     0 0 ))
-				(.add combo (GridBagConstraints. 
-					     1 GridBagConstraints/RELATIVE 
-					     1 1 
-					     0 0 
-					     GridBagConstraints/WEST 
-					     GridBagConstraints/NONE 
-					     (Insets. 0 0 0 0) 
-					     0 0 )))
-			      (if-let [names (next names)]
-				(recur (conj combos combo) (assoc models (key a-name) combo-model) names)
-				[(conj combos combo) (assoc models (key a-name) combo-model)])))
+	combos-and-models (when (seq names)
+			    (loop [combos [] models {} names names]
+			      (let [a-name (first names)
+				    field-name (name (key a-name))
+				    label (JLabel. field-name JLabel/RIGHT)
+				    combo-model (DefaultComboBoxModel. (to-array (cons "" (reduce (fn [toadd i]
+												    (if-let [a-value ((key a-name) i)]
+												      (conj toadd a-value)
+												      toadd))
+												  #{}
+												  (val a-name)))))
+				    combo (doto (JComboBox. combo-model)
+					    (.setName field-name))]
+				(doto center-panel
+				  (.add label (GridBagConstraints. 
+					       0 GridBagConstraints/RELATIVE 
+					       1 1 
+					       0 0 
+					       GridBagConstraints/EAST 
+					       GridBagConstraints/NONE 
+					       (Insets. 1 1 0 4) 
+					       0 0 ))
+				  (.add combo (GridBagConstraints. 
+					       1 GridBagConstraints/RELATIVE 
+					       1 1 
+					       0 0 
+					       GridBagConstraints/WEST 
+					       GridBagConstraints/NONE 
+					       (Insets. 0 0 0 0) 
+					       0 0 )))
+				(if-let [names (next names)]
+				  (recur (conj combos combo) (assoc models (key a-name) combo-model) names)
+				  [(conj combos combo) (assoc models (key a-name) combo-model)]))))
 	combo-action (create-comboaction (second combos-and-models) (first combos-and-models) add-buttons names)]
     (dorun (map (fn [combo] (.addActionListener combo combo-action))
 		(first combos-and-models)))

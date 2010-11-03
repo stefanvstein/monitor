@@ -50,9 +50,21 @@
   {:pre [(instance? java.util.Date timestamp)]}
   (let [until (day-as-int timestamp)  
 	dates-to-remove (filter (fn [adate] (> until adate)) (all-dates))]
+    
     (dorun (map (fn [a-date] 
 		  (remove-date a-date)) dates-to-remove))))
 
+(defn compress-older-than [timestamp, termination-pred]
+  {:pre [(instance? java.util.Date timestamp)]}
+  
+  (let [until (day-as-int timestamp)  
+	dates-to-compress (filter (fn [adate] (> until adate)) (all-dates))]
+    (info (str "About to compress data older than " until))
+    (doseq [a-date dates-to-compress]
+      (when-let [s (compress-data a-date termination-pred)]
+	(info s)))))
+  
+  
 (defn clean-live-data-older-than 
   "Remove data in live-data that has timestamp older than timestamp. Removes empty rows"
   [#^Date timestamp]
