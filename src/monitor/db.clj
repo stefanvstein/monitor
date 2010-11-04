@@ -34,6 +34,9 @@
 
 (def lockobj (Object.))
 
+(defn sync-database []
+  (db-env-sync *db-env*))
+
 (defn- time-stamp-of [bytes]
   (let [buffer (ByteBuffer/wrap bytes)
 	position (+ 18 (* 4 (int (.get buffer 17))))]

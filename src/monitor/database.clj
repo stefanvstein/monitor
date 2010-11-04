@@ -28,7 +28,8 @@
        (. directory# mkdirs))
      (using-db-env ~path ~@form))) 
 	       
-
+(defn sync-db []
+  (sync-database))
 
 (defn add-data 
   "Adding data to the store, live if bound, and history if bound. Name is expected to be a map of keyword and string value, possibly used as indices of the data. Time-stamp is expected to be a Date object."
@@ -158,7 +159,7 @@
   ([#^Date lower #^Date upper & name-spec]
      {:pre [(= java.util.Date (class lower) (class upper))]}
      
-  
+ 
   (when-not (nil? @*db-env*)
     (if (> (. lower getTime) (. upper getTime))
       (apply data-by upper lower name-spec)
@@ -175,6 +176,9 @@
 				 (assoc %1 (first %2) (conj row (second %2)))
 				 (assoc %1 (first %2) (list (second %2))))
 			      {} in-need))]
+	  (println "name-spec" name-spec)
+	  (println "data" data)
+	  (println "needs" needs)
 	  (let [
 	      from-db (apply data-by-unfiltered lower upper data)
 	      keep? (fn [required-key values a-row-key] 
@@ -184,6 +188,7 @@
 	      fored (fn [data needs] 
 		      (for [data-row data a-need needs] 
 			(list data-row a-need)))]
+	    (println from-db)
 	  (persistent! (reduce (fn [result row-and-need]
 		    (let [required-key (key (second row-and-need))
 			  required-values (val (second row-and-need))

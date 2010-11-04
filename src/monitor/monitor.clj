@@ -38,7 +38,16 @@
 					     (* 1000 60 live-minutes)))))))))
    (using-history history-directory
 		  (jmx-db-record-counter "monitor.server")
-		  (dosync (alter tasks-to-start conj
+		  
+		  (dosync
+		   (alter tasks-to-start conj
+			  (fn syncer []
+			    (while (not (terminating?))
+					(try (term-sleep (* 1 60))
+					     (catch InterruptedException _))
+					(sync-db))))
+					     
+		   (alter tasks-to-start conj
 				 (fn history-cleaner []
 				   (while (not (terminating?))
 				     (try (term-sleep (* 60 60 3 ))
