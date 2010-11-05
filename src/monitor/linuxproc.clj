@@ -1,5 +1,5 @@
 (ns monitor.linuxproc
-  (:import (java.io File FileFilter BufferedReader FileReader InputStreamReader OutputStreamWriter PushbackReader))
+  (:import (java.io File FileFilter IOException BufferedReader FileReader InputStreamReader OutputStreamWriter PushbackReader))
   (:import (java.util Date))
   (:import (java.util.concurrent Executors))
   (:import (java.util.concurrent.locks ReentrantLock))
@@ -18,10 +18,13 @@
 							     (.isDirectory file)
 							     (re-matches #"^\d+$" (.getName file))))))))]
     (filter (fn [file]
-	      (with-open [cmdline (BufferedReader. (FileReader. (File. file "cmdline")))]
-		(if-let [line (.readLine cmdline)]
-		  (re-matches re line)
-		  nil)))
+	      (try
+		(with-open [cmdline (BufferedReader. (FileReader. (File. file "cmdline")))]
+		  (if-let [line (.readLine cmdline)]
+		    (re-matches re line)
+		    nil))
+		(catch IOException _
+		  false)))
 	    pids-in-proc)))
 
 (def pids-of-interest (atom []))
@@ -328,9 +331,10 @@
 	    (let [processes (assoc {}
 			      "process"
 			      (reduce (fn [r pid-dir]
-					(with-open [stat (BufferedReader. (FileReader. (File. pid-dir "smaps")))]
-					  (let [data (loop [size 0 shared 0 private 0 resident 0 swapped 0 lines (line-seq stat)]
-						       (if-let [line (first lines)]
+					(try
+					  (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "smaps")))]
+					    (let [data (loop [size 0 shared 0 private 0 resident 0 swapped 0 lines (line-seq stat)]
+							 (if-let [line (first lines)]
 							 (cond
 							  (.startsWith line "Pss:")
 							  (recur (+ size (Long/parseLong (second (.split #"\s+" line)))) shared private resident swapped (next lines))
@@ -347,6 +351,8 @@
 							 {"shared" shared "private" private "proportional" size "resident" resident "swapped" swapped}))]
 					    (assoc r (Integer/parseInt (.getName pid-dir))
 						   data)))
+					  (catch IOException _
+					    r))
 					
 					) {} @pids-of-interest))]
 	      (if-not (empty? (get processes "process"))

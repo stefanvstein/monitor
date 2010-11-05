@@ -642,11 +642,11 @@
 				  (doseq [e elements]
 				    (db-env-remove-db *db-env* e))))
 
-	rename-db-and-indices (fn [source destination]
+	rename-db-and-indices (fn [#^String source #^String destination]
 				(let [pattern (re-pattern (str source ".*"))
 				      elements (filter #(re-matches pattern %) 
 						       (seq (db-env-db-names *db-env*)))]
-				  (doseq [e elements]
+				  (doseq [#^String e elements]
 				    (db-env-rename-db *db-env* e (.replace e source destination)))))
 	only-indexed (fn [e] (select-keys e [:category :counter :instance :host]))]
     
@@ -1129,3 +1129,22 @@
 		     (is (= 20071122 (second all)))))
      (finally  (rmdir-recursive tmp)))))
 
+(deftest newstuff
+  (let [tmp (make-temp-dir)]
+    (try
+      (using-db-env tmp
+	(let [db (db-open *db-env* "testing" :allow-create true :sorted-duplicates true)
+	     cur (db-cursor-open db)]
+	     (is (= OperationStatus/SUCCESS (db-put db 1 1)))
+	     (is (= OperationStatus/SUCCESS (db-put db 2 1)))
+	     (is (= OperationStatus/SUCCESS (db-put db 3 1)))
+	     (is (= OperationStatus/SUCCESS (db-put db 0 1)))
+	     (is (= OperationStatus/SUCCESS (db-put db 1 2)))
+	     (is (= OperationStatus/SUCCESS (db-put db 1 0)))
+	     (db-cursor-first cur)
+	     (is (= [1 0] (db-cursor-search cur 1)))
+	     (is (= [1 1] (db-cursor-next cur)))
+	     (db-cursor-close cur)
+	     (db-close db)
+	     (db-env-remove-db *db-env* "testing")))
+      (finally (rmdir-recursive tmp)))))
