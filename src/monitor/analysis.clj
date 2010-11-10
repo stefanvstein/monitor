@@ -228,7 +228,9 @@
 			      (actionPerformed [_]
 					       (let [fun (.getSelectedItem (.getModel c ))
 						     gran-model (.getModel granularity-combo)]
-						 (if (= fun "Raw")
+						 (if (some #{fun} ["Raw" "Change/Second"
+								  "Change/Minute"
+								  "Change/Hour"])
 						   (.setEnabled granularity-combo false)
 						   (do (.setEnabled granularity-combo true)
 						   (cond
@@ -245,10 +247,7 @@
 						    (some #{fun} ["Average/Day"
 								  "Mean/Day" 
 								  "Min/Day" 
-								  "Max/Day"
-								  "Change/Second"
-								  "Change/Minute"
-								  "Change/Hour"])
+								  "Max/Day"])
 						    (.setModel granularity-combo (DefaultComboBoxModel. (to-array ["All Data" "Minute" "Hour" "Day"])))
 						    )))))))
 		     c)
@@ -285,7 +284,7 @@
 				     (if (< to from)
 				       (are-you-sure to from)
 				       (if (cond
-					    (and (< (* 1000 60 60 24) (- to from))
+					    (and (< (* 1000 60 60 26) (- to from))
 						 (= "Raw" func-string))
 					    true
 					    (and (< (* 1000 60 60 24 2) (- to from))
@@ -303,25 +302,32 @@
 					 (= JOptionPane/YES_OPTION (JOptionPane/showConfirmDialog dialog "Are you sure, this appear to be a lot of data?" "Are you sure?" JOptionPane/YES_NO_OPTION))
 					 true)
 				       ))]
-		  ;			
-		  (when (are-you-sure (.getTime from) (.getTime to) (.getSelectedItem func-combo) (.getSelectedItem granularity-combo))
-		    (let [shift (if (.isSelected (.getModel shift-check))
-				  (- (.getTime (.getDate shift-model)) (.getTime from))
-				  0)]
-		    (on-add-to-analysis from
-					to
-					shift
-					name-values
-					@all-names
-					(.getSelectedItem func-combo)
-					(.getSelectedItem granularity-combo)
-					(:time-series contents)
-					(:colors contents)
-					(:chart contents)
-					(:add-to-table contents)
-					(:add-column contents)
-					(:status-label contents)
-					server)))))
+					;
+		  (let [gran (condp = (.getSelectedItem func-combo)
+				 "Raw" "All Data"
+				 "Change/Second" "All Data"
+				 "Change/Minute" "Minute"
+				 "Change/Hour" "Hour"
+				 (.getSelectedItem func-combo))
+			fun (.getSelectedItem func-combo)]
+		    (when (are-you-sure (.getTime from) (.getTime to) fun gran)
+		      (let [shift (if (.isSelected (.getModel shift-check))
+				    (- (.getTime (.getDate shift-model)) (.getTime from))
+				    0)]
+			(on-add-to-analysis from
+					    to
+					    shift
+					    name-values
+					    @all-names
+					    fun
+					    gran
+					    (:time-series contents)
+					    (:colors contents)
+					    (:chart contents)
+					    (:add-to-table contents)
+					    (:add-column contents)
+					    (:status-label contents)
+					    server))))))
 	
 	add (let [add (JButton. "Add")]
 	      (.setEnabled add false)

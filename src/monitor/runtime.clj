@@ -17,7 +17,7 @@
   (:import (info.monitorenter.gui.chart.axis AxisLinear))
   (:import (info.monitorenter.gui.chart.traces.painters TracePainterLine TracePainterDisc))
 )
-(def types ["Raw" "Average" "Mean" "Change/Second" "Change/Minute" "Change/Hour"])
+(def types ["Raw" "Average" "Mean" "Change/Second" "Change/Minute"])
 (defn- with-type-added [type data]
   (if (map? data)
    (reduce (fn [r e]
@@ -233,10 +233,10 @@
 		     (do
 		       (when-let [row  (second (get @name-trace-rows a-name))]
 			 ((:remove-row contents) row)))
-		     (dorun (map 
-			     (fn [data]
-			       (.addPoint trace (TracePoint2D. (.getTime (key data)) (val data)))) 
-			     data)))
+		     (do
+		       (.removeAllPoints trace)
+		       (doseq [d data]
+			 (.addPoint trace (TracePoint2D. (.getTime (key d)) (val d))))))
 		   )) 
 	       watched-names))))
 

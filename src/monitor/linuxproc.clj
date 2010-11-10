@@ -441,7 +441,7 @@
 
 
 (defn serve-linux-proc [port frequency re]
-  (when (not (System/getProperty "nogui"))
+  (when (not (System/getProperty "java.awt.headless"))
     (shutdown-button "Monitor Linux proc Agent"))
   (shutdown-jmx "monitor.linuxproc")
   (when re

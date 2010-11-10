@@ -26,44 +26,16 @@
 
 (def opened-wdata (ref {}))
 (def unused-wdata-queue (ref '()))
-(def wdata-to-keep-alive 4)
+(def wdata-to-keep-alive 2)
   
-(def dayname-db (atom nil))
-(def dayname-cache (atom nil))
-(def all-days (atom #{}))
+;(def dayname-db (atom nil))
+;(def dayname-cache (atom nil))
+;(def all-days (atom #{}))
 
 (def lockobj (Object.))
 
 (defn sync-database []
   (db-env-sync *db-env*))
-
-(defn- time-stamp-of [bytes]
-  (let [buffer (ByteBuffer/wrap bytes)
-	position (+ 18 (* 4 (int (.get buffer 17))))]
-  (.getLong buffer position)))
-
-(defn- host-index-of [bytes]
-  (.getInt (ByteBuffer/wrap bytes) 1))
-
-
-(defn- category-index-of [bytes]
-  (.getInt (ByteBuffer/wrap bytes) 5))
-
-
-(defn- counter-index-of [bytes]
-  (.getInt (ByteBuffer/wrap bytes) 9))
-
-
-(defn- instance-index-of [bytes]
-  (.getInt (ByteBuffer/wrap bytes) 13))
-   
-
-(def index-keywords-and-creators (zipmap 
-			       [:host :category :counter :instance]
-			       [host-index-of 
-				category-index-of 
-				counter-index-of 
-				instance-index-of]))
 
 (defn- put-last [s e]
      (lazy-cat (remove #(= e %) s) [e]))
@@ -85,6 +57,7 @@
 (defn days-with-data []
   (map #(Integer/parseInt %) (filter #(re-matches #"\d{8}" %) (seq (db-env-db-names *db-env*)))))
 
+;---Start of day index name stuff
 (defn- load-day 
   "Returns a day structure from database, or an empty if no db is used, or no data was found for the day"
   [day]
@@ -96,7 +69,13 @@
 	empty)
       empty)))
 
-
+(defn- remove-day-indices [day]
+  (db-delete @dayindex-db day)
+  (dosync
+   (swap! current-day-indexes #(dissoc % day))
+   (swap! lru-days-for-indices (fn [lru] (vec (filter #(not= day %) lru))))
+   )
+  )
   
 (defn- get-day [day]
   (if-let [the-day (get @current-day-indexes day)]
@@ -110,6 +89,9 @@
 	(swap! current-day-indexes (fn [c] 
 			      (select-keys c @lru-days-for-indices)))
 	the-day)))
+
+(defn names [day]
+  (keys (:by-name (get-day day))))
 
 (defn- name-for-index [day index]
   (get (:by-index (get-day day)) index))
@@ -139,6 +121,8 @@
 	  (save-index new-days day)
 	  (get (:by-name (get new-days day)) name))))))
 
+
+
 (defn- integral?
   "returns true if a number is actually an integer (that is, has no fractional part)"
   [x]
@@ -151,24 +135,11 @@
    :else        false))
 
 (defn- to-bytes
-  ([day value time-stamp index-data]
+  ([value time-stamp]
   (let [array-stream (ByteArrayOutputStream.)
-	data-out (DataOutputStream. array-stream)
-	the-day (get-day day)]
-    (.writeByte data-out 1)
-    (.writeInt data-out (index-for-name day (:host index-data)))
-    (.writeInt data-out (index-for-name day (:category index-data)))
-    (.writeInt data-out (index-for-name day (:counter index-data)))
-    (.writeInt data-out (index-for-name day (:instance index-data)))
-    (let [others (count (dissoc index-data :host :category :counter :instance))]
-					;(println "*<-" index-data "*" others)
-      (.writeByte data-out others)
-      (when (< 0 others)
-	(dorun (map (fn [e] 
-		      (.writeInt data-out (index-for-name day (name (key e))))
-		      (.writeInt data-out (index-for-name day (val e))))
-		    (dissoc index-data :host :category :counter :instance)))))
+	data-out (DataOutputStream. array-stream)]
 
+    (.writeInt data-out 1)
     (.writeLong data-out (.getTime #^Date time-stamp))
     (if (integral? value)
       (do (.writeByte data-out 1)
@@ -178,83 +149,39 @@
     (.close data-out)
     (.toByteArray array-stream)))
 
-  ([day time-and-values index-data]
+  ([time-and-values]
      (let [array-stream (ByteArrayOutputStream.)
-	   data-out (DataOutputStream. array-stream)
-	   the-day (get-day day)]
-       (.writeByte data-out 2)
-       (.writeInt data-out (index-for-name day (:host index-data)))
-       (.writeInt data-out (index-for-name day (:category index-data)))
-       (.writeInt data-out (index-for-name day (:counter index-data)))
-       (.writeInt data-out (index-for-name day (:instance index-data)))
-       (let [others (count (dissoc index-data :host :category :counter :instance))]
-	 (.writeByte data-out others)
-	 (when (< 0 others)
-	   (dorun (map (fn [e] 
-			 (.writeInt data-out (index-for-name day (name (key e))))
-			 (.writeInt data-out (index-for-name day (val e))))
-		       (dissoc index-data :host :category :counter :instance)))))
+	   data-out (DataOutputStream. array-stream)]
        (.writeInt data-out (count time-and-values))
-       (dorun (map (fn [e]
-		     (.writeLong data-out (.getTime #^Date (key e)))
-		     (let [value (val e)]
-		       (if (integral? value)
-			 (do (.writeByte data-out 1)
-			     (.writeLong data-out (long value)))
-			 (do (.writeByte data-out 2)
-			     (.writeDouble data-out (double value))))
-		       )) time-and-values))
+       (doseq [e time-and-values]
+	 (.writeLong data-out (.getTime #^Date (key e)))
+	 (let [value (val e)]
+	   (if (integral? value)
+	     (do (.writeByte data-out 1)
+		 (.writeLong data-out (long value)))
+	     (do (.writeByte data-out 2)
+		 (.writeDouble data-out (double value))))
+	   ))
        (.close data-out)
        (.toByteArray array-stream)
-  )))
+       )))
 
-(defn- from-bytes [bytes day]
+
+(defn from-bytes [bytes]
   (let [buffer (ByteBuffer/wrap bytes)
-	format (int (.get buffer))]
-    (if (>= 2 format)
-      
-      (let [
-	    host (name-for-index day (.getInt buffer))
-	    category (name-for-index day (.getInt buffer))
-	    counter (name-for-index day (.getInt buffer))
-	    instance (name-for-index day (.getInt buffer))
-	    additional (int (.get buffer))
-	    
-	    r (reduce #(if (second %2)
-			 (assoc %1 (first %2) (second %2))
-			 %1)
-		      {}
-		      [[:host host] 
-		       [:counter counter] 
-		       [:category category] 
-		       [:instance instance]])
-	    res (if (< 0 additional)
-		  (loop [i 0 v r]
-		    (if (< i additional)
-		      (recur (inc i) 
-			     (assoc v 
-			       (keyword (name-for-index day (.getInt buffer))) 
-			       (name-for-index day (.getInt buffer))))
-		      v))
-		  r)]
-	(if (= 1 format)
-	    (let [timestamp (Date. (.getLong buffer))
-	    
-		  value-type (int (.get buffer))
-		  value (if (= 1 value-type)
-			  (.getLong buffer)
-			  (.getDouble buffer))]
-	      [res {timestamp value}])
-	    (let [num (.getInt buffer)
-		  time-and-values (reduce (fn [r i]
-					    (let [timestamp (Date. (.getLong buffer))
-						  value-type (int (.get buffer))
-						  value (if (= 1 value-type)
-							  (.getLong buffer)
-							  (.getDouble buffer))]
-					      (assoc r timestamp value)))
-					    (sorted-map) (range num))]
-	      [res (into (sorted-map) time-and-values)]))))))
+	i (.getInt buffer)
+	p (fn p [buffer i]
+	    (when-not (= 0 i)
+	      (lazy-seq (cons (let [timestamp (Date. (.getLong #^ByteBuffer buffer))
+				    value-type (int (.get #^ByteBuffer buffer))
+				    value (if (= 1 value-type)
+					    (.getLong #^ByteBuffer buffer)
+					    (.getDouble #^ByteBuffer buffer))]
+				[timestamp value])
+			      (p buffer (dec i))))))]
+    (p buffer i)))
+    
+
 
     
 
@@ -281,12 +208,9 @@
 (defmacro using-db-env [path & body]
   `(when-let [db-env# (db-env-open ~path  :allow-create true  :transactional true :txn-no-sync true)]
      (when-let [dayindex-db# (db-open db-env# "day-index" :allow-create true)]
-       (when-let [dayname-db# (db-open db-env# "day-name" :allow-create true)]
        (reset! dayindex-db dayindex-db#)
        (reset! current-day-indexes {})
        (reset! lru-days-for-indices [])
-       (reset! dayname-db dayname-db#)
-       (swap! all-days (fn [c#] into c# (all-dates)))
        (try
 	(dosync (ref-set *db-env* db-env#))
 	(try
@@ -303,9 +227,7 @@
 	   (reset! current-day-indexes  {})
 	   (reset! dayindex-db nil)
 	   (reset! lru-days-for-indices [])
-	   (reset! dayname-db nil)
-	   (evict-dayname-cache)
-	   (db-close dayname-db#)
+					;(evict-dayname-cache)***********************
 	   (db-close dayindex-db#)
 	   (dosync
 	    (ref-set opened-data {})
@@ -319,37 +241,20 @@
 	(dosync (ref-set *db-env* nil))))
        
       (finally 
-       (db-env-close db-env#)))))))
+       (db-env-close db-env#))))))
 
 
 
 (defn- open-db [db-name allow-create]
   (try
-  (when-let [db (db-open @*db-env* (str db-name) :allow-create allow-create)]
-    (let [next-key (incremental-key db)]
-      (when-let [indices (reduce (fn [res data]
-				   (assoc res 
-				     (key data)
-				     (db-sec-open @*db-env*
-						  db
-						  (str db-name "-" (name (key data)))
-						  :allow-create true
-						  :sorted-duplicates true
-						  :key-creator-fn (val data))))
-				 {} index-keywords-and-creators)]
-	{:db db, :name db-name, :next next-key, :indices indices})))
-  (catch com.sleepycat.je.DatabaseNotFoundException e
-    (when allow-create
-      (throw e)))))
-      
-
-
-
+    (when-let [db (db-open @*db-env* (str db-name) :allow-create allow-create :sorted-duplicates true)]
+      {:db db, :name db-name})
+    (catch com.sleepycat.je.DatabaseNotFoundException e
+      (when allow-create
+	(throw e)))))
 
 (defn close-db [db]
-  (dorun (map (fn [v] (db-sec-close v)) (vals (:indices db))))
   (db-close (:db db)))
-
 
 
 (defn- clean-after-release
@@ -489,32 +394,7 @@
 	   (do ~@body)
 	   (finally
 	    (release-db day#)
-	    )))
-       (println "Sorry! Can't use" ~day))))
-
-
-(defn evict-dayname-cache []
-  (reset! dayname-cache nil))
-
-(defn- add-to-dayname [date names]
-  (when-let [db  @dayname-db]
-    (swap! dayname-cache (fn [_] [date names]))
-    (db-put @dayname-db date names)
-    (swap! all-days (fn [c] (conj c date)))))
-
-(defn get-from-dayname [date]
-  (when-let [db @dayname-db]
-    (if (= date (first @dayname-cache))
-      (second @dayname-cache)
-      (second (db-get db date)))))
-
-(defn all-dates []
-  (when-let [db @dayname-db]
-    (with-db-cursor [cur db]
-      (loop [r (sorted-set) c (db-cursor-next cur)]
-	(if (empty? c)
-	  r
-	  (recur (conj r (first c)) (db-cursor-next cur)))))))
+	    ))))))
 
 
 (defn records [date]
@@ -524,191 +404,94 @@
 
 (defn remove-date [date]
   (locking lockobj
-  (let [date (day-as-int date)
-	there-are-no #(or (nil? %) (= 0 %))]
-    (when (not (get @keep-open-data date))
-      (dosync
-       (let [active-users (get @users-per-data date)]
-	
-	 (when (there-are-no active-users)
-	   (swap! all-days disj date)
-	   (evict-dayname-cache)
-	   ;---
-	   (when-let [db (get @opened-data date)]
-	     (try
-	      (close-db db)
-	      (catch Exception e
-		(println "Ignoring exception while closing" date)
-		(print-stack-trace e))))
+    (let [date (day-as-int date)
+	  there-are-no #(or (nil? %) (= 0 %))]
+      (when (not (get @keep-open-data date))
+	(dosync
+	 (let [active-users (get @users-per-data date)]
 	   
-	   (alter opened-data dissoc date)
-	   (alter unused-data-queue (fn [q] (apply list (remove #(= date %) q))))
-	   (when-let [db (get @opened-wdata date)]
+	   (when (there-are-no active-users)
+					;(swap! all-days disj date)
+					;	   (evict-dayname-cache)****************************************
+					;---
+	     (when-let [db (get @opened-data date)]
+	       (try
+		 (close-db db)
+		 (catch Exception e
+		   (println "Ignoring exception while closing" date)
+		   (print-stack-trace e))))
+	     
+	     (alter opened-data dissoc date)
+	     (alter unused-data-queue (fn [q] (apply list (remove #(= date %) q))))
+	     (when-let [db (get @opened-wdata date)]
+	       (try
+		 (close-db db)
+		 (catch Exception e
+		   (println "Ignoring exception while closing" date)
+		   (print-stack-trace e))))
+	     
+	     (alter opened-wdata dissoc date)
+	     (alter unused-wdata-queue (fn [q] (apply list (remove #(= date %) q))))
+					;---
+	     (alter users-per-data dissoc date)
 	     (try
-	      (close-db db)
-	      (catch Exception e
-		(println "Ignoring exception while closing" date)
-		(print-stack-trace e))))
-	   
-	   (alter opened-wdata dissoc date)
-	   (alter unused-wdata-queue (fn [q] (apply list (remove #(= date %) q))))
-	   ;---
-	   (alter users-per-data dissoc date)
-	   (try
-	    
-	    (let [pattern (re-pattern (str date ".*"))]
-	      (dorun (map #(db-env-remove-db *db-env* %) 
-			  (filter #(re-matches pattern %) 
-				  (seq (db-env-db-names *db-env*))))))
-	    (catch Exception e
-	      (println "Ignoring exception while deleteing" date)
-	      (print-stack-trace e)))
-	   (try
-	    (db-delete @dayname-db date)
-	    (db-delete @dayindex-db date)
-	    (catch Exception e
-	      (println "Ignoring exception while deleteing metadata for" date)
-	      (print-stack-trace e))))))))))
+	       
+	       (let [pattern (re-pattern (str date ".*"))]
+		 (dorun (map #(db-env-remove-db *db-env* %) 
+			     (filter #(re-matches pattern %) 
+				     (seq (db-env-db-names *db-env*))))))
+	       (catch Exception e
+		 (println "Ignoring exception while deleteing" date)
+		 (print-stack-trace e)))
+	     (try
+					;	    (db-delete @dayname-db date)
+	       (remove-day-indices date)
+	       
+	       (catch Exception e
+		 (println "Ignoring exception while deleteing metadata for" date)
+		 (print-stack-trace e))))))))))
 	      
 
 
-(defn- ensure-name [name date]
-  (let [date (day-as-int date)]
-    (if-let [current (get-from-dayname date)]
-      (if (not (contains? current name))
-	(add-to-dayname date (conj current name)))
-      (add-to-dayname date (conj #{} name)))))
 
-     
-(defn get-from-db [fun day & keys-and-data]
-  (let [day (day-as-int day)]
-    (when (get @all-days day)
-      (using-day day false
-   
-		 (let [indexes-and-data (apply hash-map keys-and-data)
-		       is-valid-indexes (filter (complement (set (keys index-keywords-and-creators)))
-						(keys indexes-and-data))
-		       close-cursor #(db-cursor-close %)
-		       close-cursors #(dorun (map close-cursor %))
-		       open-cursor (fn [opened-cursors index-and-data]
-				     (let [cursor (db-cursor-open ((key index-and-data) (:indices *db-struct*)) :isolation :read-uncommited)]
-				       (try
-					(let [index-of-name (index-for-name *day* (val index-and-data))]
-					  (if (empty? (db-cursor-search cursor index-of-name :exact true))
-					    (do 
-					      (close-cursor cursor) 
-					      opened-cursors)
-					    (conj opened-cursors cursor)))
-					(catch Exception e
-					  (close-cursors (conj opened-cursors cursor))
-					  (throw e)))))]
-		   
-		   (when is-valid-indexes     
-		     (let [failed (atom true)
-			   retries (atom 0)
-			   r (atom nil)]
-		       (while (and @failed (> 500 @retries))
-			      (try
-			       (let [cursors (reduce open-cursor [] indexes-and-data)]
-				 (try
-				  (when (and (= (count cursors) 
-						(count indexes-and-data)) 
-					     (not (empty? cursors)))
-				    (with-db-join-cursor [join cursors]
-				      (let [p (fn p [jo]
-						(let [ne (db-join-cursor-next jo)]
-						  (if (empty? ne)
-						    nil
-						    (let [data (from-bytes (second ne) *day*)]
-							(lazy-seq (cons data (p jo)))))))]
-					(reset! r (fun (p join))))))
-				  (finally (close-cursors cursors)))
-				 (reset! failed false))
-			       (catch Exception e
-				 (if (some #(instance? LockConflictException %) (causes e))
-				   (do (swap! retries (fn [c] (inc c))) 
-				       (println (str (java.util.Date.) " deadlock in read"))
-				       (try (Thread/sleep 500) (catch Exception e)))
-				   (throw e)))))
-	  @r)))))))
-
-
-(defn compress-data [date termination-fn]
-  (let [cname "beingcompressed"
-	remove-db-and-indices (fn [name]
-				(let [pattern (re-pattern (str name ".*"))
-				      elements (filter #(re-matches pattern %)
-						       (seq (db-env-db-names *db-env*)))]
-				  (doseq [e elements]
-				    (db-env-remove-db *db-env* e))))
-
-	rename-db-and-indices (fn [#^String source #^String destination]
-				(let [pattern (re-pattern (str source ".*"))
-				      elements (filter #(re-matches pattern %) 
-						       (seq (db-env-db-names *db-env*)))]
-				  (doseq [#^String e elements]
-				    (db-env-rename-db *db-env* e (.replace e source destination)))))
-	only-indexed (fn [e] (select-keys e [:category :counter :instance :host]))]
-    
-
-    (remove-db-and-indices cname)
-    
-    (let [there-are-no #(or (nil? %) (= 0 %))
-	  names (get-from-dayname date)
-	  get-values  (fn [e] (reduce (fn [a b]
-					(reduce (fn [a1 b1]
-						  (assoc a1 (key b1) (val b1)))
-						a
-						(second b)))
-				      (sorted-map)
-				      e))
-	  
-	  num (records date)
-	  as-vector (fn [m] (reduce (fn [r e]
-				      (conj r (key e) (val e)))
-				    [] m))]
-      
-      (if (= num (count names))
-	(str date " is already fully compressed")
-	(let [db (open-db cname true)]
-	  (try
-	    (doseq [e names]
-	      (when-not (termination-fn)
-		(when-let [data (doall (apply get-from-db
-					      get-values
-					      date
-					      (as-vector (only-indexed e))))]
-		  (when-let [bytes (to-bytes date data e)]
-		    (db-put (:db db)
-			    (.array (.putLong (ByteBuffer/allocate 8) ((:next db))))
-			    bytes)))))
-	    (finally
-	     (close-db db)))
-	  (locking lockobj
-	    (if-not (termination-fn)
-	     (if (= num (records date))
-	       (if (there-are-no (get @users-per-data date))
-		 (do (clean-after-release [date])
-		     (remove-db-and-indices (str date))
-		     (rename-db-and-indices cname (str date))
-		     (str date " has been compressed"))
-		 (str "Could not rename " date " after compression. It is being used"))
-	       (str "Could not rename after compress " date ". The source was concurrently modified"))
-	     (str "Compression of " date " aborted"))))))))
+     ;note that keys and data is a map now
+  (defn get-from-db [fun day keys-and-data]
+    (let [day (day-as-int day)]
+      (when-let [index (index-for-name day keys-and-data)]
+	(using-day day false
+		   (let [cur (db-cursor-open (:db *db-struct*))]
+		     (try
+		       (let [first-value (db-cursor-search cur index)
+			     p (fn p [cursor data]
+				 (if data
+				   (if-let [following (next data)]
+				     (lazy-seq (cons (first data) (p cursor following)))
+				     (lazy-seq (cons (first data) (p cursor nil))))
+				   (let [ne (db-cursor-next cursor)]
+				     (when (= (first ne) index)
+				       (if-let [data (seq (from-bytes (second ne)))]
+					 (lazy-seq (cons (first data) (p cursor (next data))))
+					 (p cursor nil))))))]
+			 (when (= (first first-value) index)
+			   (when-let [u (seq (from-bytes (second first-value)))]
+			     (fun (lazy-seq (cons (first u) (p cur (next u)))))
+			     )))
+		       (finally (db-cursor-close cur))))))))
 
   
 (defn add-to-db 
   "Adds an entry to db. There will be an index of day-stamps if index :date is currently in current set of inidices. keyword-keys in keys will be indices, if those inidices is currently in use."
   [value time keys]
+  (let [day (day-as-int time)
+	index (index-for-name day keys)]
   (using-day (day-as-int time) true
-	     (let [data (to-bytes *day* value time keys)
+	     (let [data (to-bytes value time)
 		   failed (atom true)
 		   retries (atom 0)]
-	       (ensure-name keys *day*)
 	       (while (and @failed (> 500 @retries))  
 		      (try
 		       (db-put (:db *db-struct*) 
-			       (.array (.putLong (ByteBuffer/allocate 8) ((:next *db-struct*))))
+			       index
 			       data)
 		       (reset! failed false)
 		       (catch Exception e 
@@ -717,434 +500,128 @@
 			       (println (str (java.util.Date.) " deadlock in add"))
 			       (try (Thread/sleep 500)
 				    (catch Exception e)))
-			   (throw e))))))))
+			   (throw e)))))))))
+
+
+(defn compress-data
+  ([date termination-fn]
+     (let [cname "beingcompressed"
+	   remove-db-and-indices (fn [name]
+				   (let [pattern (re-pattern (str name ".*"))
+					 elements (filter #(re-matches pattern %)
+							  (seq (db-env-db-names *db-env*)))]
+				     (doseq [e elements]
+				       (db-env-remove-db *db-env* e))))
+	   
+	   rename-db-and-indices (fn [#^String source #^String destination]
+				   (let [pattern (re-pattern (str source ".*"))
+					 elements (filter #(re-matches pattern %) 
+							  (seq (db-env-db-names *db-env*)))]
+				     (doseq [#^String e elements]
+				       (db-env-rename-db *db-env* e (.replace e source destination)))))]
+       
+       
+       (remove-db-and-indices cname)
+       
+       (let [there-are-no #(or (nil? %) (= 0 %))
+	     names (names date)
+	     get-values (fn [e] (reduce (fn [a b]
+					  (assoc a (first b) (second b)))
+					(sorted-map)
+					e))
+	     
+	     num (records date)
+	     as-vector (fn [m] (reduce (fn [r e]
+					 (conj r (key e) (val e)))
+				       [] m))]
+	 
+	 (if (= num (count names))
+	   (str date " is already fully compressed")
+	   (let [db (open-db cname true)]
+	     (try
+	       (doseq [e names]
+		 (when-not (termination-fn)
+		   (when-let [data (get-from-db
+				    get-values
+				    date
+				    e)]
+		     (when-let [bytes (to-bytes data)]
+		       (db-put (:db db)
+			       (index-for-name date e)
+			       bytes)))))
+	       (finally
+		(close-db db)))
+	     (locking lockobj
+	       (if-not (termination-fn)
+		 (if (= num (records date))
+		   (if (there-are-no (get @users-per-data date))
+		     (do (clean-after-release [date])
+			 (remove-db-and-indices (str date))
+			 (rename-db-and-indices cname (str date))
+			 (str date " has been compressed"))
+		     (str "Could not rename " date " after compression. It is being used"))
+		   (str "Could not rename after compress " date ". The source was concurrently modified"))
+		 (str "Compression of " date " aborted"))))))))
+  ([date]
+     (compress-data date (fn [] false))))
+
 
 
  
 
 
-(deftest test-db
-(binding [datas-to-keep-alive 3]
+(deftest test-read-and-write
   (let [tmp (make-temp-dir)
 	df (SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)
-	get-values  (fn [e] (reduce (fn [a b]
-				      (reduce (fn [a1 b1]
-						(conj a1 (val b1)))
-					      a
-					      (second b)))
-				    []
+	get-values (fn [e] (reduce (fn [a b]
+				      (assoc a (first b) (second b)))
+				    (sorted-map)
 				    e))
-	printod (fn printod []
-		  (println "....start")
-		  (when (not (=(count (keys @opened-data)) (count (set (vals @opened-data)))))
-		    (throw (IllegalStateException. "What*******************")))
-		  (println "opened-data" (keys @opened-data))
-		  (println "unused-data-queue" @unused-data-queue)
-		  (println "users-per-data" @users-per-data)
-		  (println "keep-open-data" @keep-open-data)
-		  (println "....end")
-		  )]
-    (try
-     (using-db-env tmp
-
-		   (add-to-db 2 (dparse "20070101 120001") {:category "Olof" :counter "Gustav" :instance "Nisse" :host "Adam"})	       
-		   (add-to-db 3 (dparse "20070101 120001") {:category "Olof" :counter "Gustav" :instance "Nisse" :host "Adam"})
-		   (add-to-db 4 (dparse "20070101 120001") {:category "Olof" :counter "Gustav" :instance "Nisse" :host "Adam"})
-		   (add-to-db 5 (dparse "20070101 120001") {:category "Olof" :counter "Gustav" :instance "Nisse" :host "Bertil"})
-		   (add-to-db 6 (dparse "20070101 120001") {:category "Olof" :counter "Gustav" :instance "Nisse" :host "Bertil"})
-		   (add-to-db 7 (dparse "20070101 120001") {:category "Olof" :counter "Gustav" :instance "Nisse"})
-		   (add-to-db 8 (dparse "20070102 120001") {:category "Olof" :counter "Gustav" :instance "Nisse" :host "Adam"})		   
-
-
-			    (let [db (aquire-db 20070101 false)]
-			      (is (= 6 (db-count (:db db))))
-			      (release-db 20070101))
-			    (is (= [2 3 4]
-				 (doall (get-from-db 
-					 get-values
-					 20070101 
-					 :category "Olof" :counter "Gustav" :host "Adam" ))))
-
-			    (is (= [8]
-				 (doall (get-from-db 
-				get-values
-				  20070102 
-				  :category "Olof" :counter "Gustav" :host "Adam" ))))
-
-			    (is (= [8]
-				 (doall (get-from-db 
-					 get-values
-				  20070102 
-				  :category "Olof" :counter "Gustav" :host "Adam" ))))
-
-
-			    (is (nil? (doall (get-from-db 
-					      get-values
-					      20070103 
-					      :category "Olof" :counter "Gustav" :host "Adam" ))))
-			    
-			    (is (nil? (doall (get-from-db 
-					      get-values
-					      20070101 
-					      :category "Guilla" :counter "Gustav" :host "Adam" ))))
-
-			    (is (= #{20070101 20070102} (set (all-dates))))
-			    
-			    (is (= #{{:instance "Nisse", :counter "Gustav", :category "Olof"} 
-				     {:host "Adam",   :instance "Nisse", :counter "Gustav", :category "Olof"} 
-				     {:host "Bertil", :instance "Nisse", :counter "Gustav", :category "Olof"}}
-				     (get-from-dayname 20070101)))
-			    (is (= #{{:category "Olof", :counter "Gustav", :instance "Nisse", :host "Adam"}}
-				     (get-from-dayname 20070102)))
-			    (is (= #{20070101 20070102} (set (days-with-data))))
-			    (is (= #{20070101 20070102} @all-days))
-			    (remove-date 20070102)
-			    (is (= #{20070101} (set (days-with-data))))
-			    (is (nil?
-				 (doall (get-from-db 
-					 get-values
-					 20070102 
-					 :category "Olof" :counter "Gustav" :host "Adam" ))))
-			    (is (= [2 3 4]
-				 (doall (get-from-db 
-					 get-values
-					 20070101 
-					 :category "Olof" :counter "Gustav" :host "Adam" ))))
-
-			    (using-day 20070101 false
-				       (remove-date 20070101))
-			    (is (= [2 3 4]
-				   (doall (get-from-db 
-					   get-values
-					   20070101 
-					   :category "Olof" :counter "Gustav" :host "Adam" ))))
-
-			    (is (= #{20070101} (set (days-with-data))))
-			    (remove-date 20070101)
-			    (is (= #{} (set (days-with-data))))
-			    (is (nil?
-				 (doall (get-from-db 
-					 get-values
-					 20070101 
-					 :category "Olof" :counter "Gustav" :host "Adam" ))))
-			    (remove-date 20070101)
-
-			    (add-to-db 5 (dparse "20070101 120001") {:category "Olof" :counter "Gustav" :instance "Nisse" :host "Bertil"})
-			    (is (= #{20070101} (set (days-with-data))))
-			    (is (nil?
-				   (doall (get-from-db 
-					   get-values
-					   20070101 
-					   :category "Olof" :counter "Gustav" :host "Adam" ))))
-			    (is (= [5]
-				   (doall (get-from-db 
-					   get-values
-					   20070101 
-					   :host "Bertil" ))))
-			    (remove-date 20070101)
-			    (is (= #{} (set (days-with-data))))
-
-			    
-		   )
-     (using-db-env tmp
-		  
-
-		  
-		  (let [adb (open-db "Arne" true)
-			adb2 (open-db "Arne" true)] 
-		    (try 
-		     (try
-		      (finally
-		       (close-db adb)
-		       ))
-		     (finally
-		      (close-db adb2)))
-		      )
-		  
-
-		  (let [adb (aquire-db 20070812 true)
-			abd2 (aquire-db "20070812" false)]
-		    (try
-		     (try
-		      (is (= 2 (get @users-per-data 20070812)))
-		      (is (= 1 (count @opened-wdata)))
-		      (finally 
-		       (release-db "20070812")))
-		     (is (= 1 (get @users-per-data 20070812)))
-		     (is (= 1 (count @opened-wdata)))
-		     (finally
-		      (release-db 20070812)))
-		    (is (nil? (get @users-per-data 20070812)))
-		    (is (= 1 (count @opened-wdata))))
-		  
-)
-
-
-     (using-db-env tmp
-		   (binding [datas-to-keep-alive 4]
-		   (let [dbs (doall (map #(aquire-db (format "200711%02d" %)) (range 7)))]
-		     (is (= (set (range 20071100 20071107)) (set (keys @opened-wdata))))
-		     (dorun (map #(release-db (:name %)) dbs))
-		     (is (= (set (range 20071103 20071107)) (set (keys @opened-wdata))))
-		     )))
-
-
-     (using-db-env tmp
-		   (binding [datas-to-keep-alive 4]
-		   
-		   (let [dbs (doall (map #(aquire-db (format "200712%02d" %)) (range 7)))]
-		     (mark-as-always-opened 20071201)
-		     (is (= (set (range 20071200 20071207)) (set (keys @opened-wdata))))
-		     (dorun (map #(release-db (:name %)) dbs))
-		     (is (= (conj (set (range 20071204 20071207)) 20071201) (set (keys @opened-wdata))))
-		       (is (= (count @opened-wdata) 4))
-		       (is (= 1 (count @keep-open-data)))
-		       (is (= 3 (count @unused-data-queue)))
-		       (is (zero? (count @users-per-data)))
-
-
-		     (mark-as-not-always 20071201)
-		     (is (= (count @opened-wdata) 4))
-		     (is (zero? (count @keep-open-data)))
-		     (is (= 4 (count @unused-data-queue)))
-		     (is (zero? (count @users-per-data)))
-
-
-		     )))
-
-     (using-db-env tmp
-		   (binding [datas-to-keep-alive 4]
-		       (mark-as-always-opened 20071201)
-		     (let [dbs (doall (map #(aquire-db (format "200712%02d" %)) (range 7)))]
-		       (is (= (count @opened-wdata) 7))
-		       (is (= 1 (count @keep-open-data)))
-		       (is (zero? (count @unused-data-queue)))
-		       (is (= 7 (count @users-per-data)))
-		       (is (= 7 (apply + (vals @users-per-data))))
-		       
-		       (mark-as-not-always 20071201)
-		       (is (= (count @opened-wdata) 7))
-		       (is (zero? (count @keep-open-data)))
-		       (is (zero? (count @unused-data-queue)))
-		       (is (= 7 (count @users-per-data)))
-		       (is (= 7 (apply + (vals @users-per-data))))
-
-		       (dorun (map #(release-db (:name %)) dbs))
-		       (is (= 4 (count @opened-wdata)))
-		       (is (zero? (count @keep-open-data)))
-		       (is (= 4 (count @unused-data-queue)))
-		       (is (zero? (count @users-per-data)))
-		       (is (zero? (apply + (vals @users-per-data)))))))
-
-
-     (using-db-env tmp
-		   (binding [datas-to-keep-alive 4]
-		     (mark-as-always-opened 20071201)
-		     (let [dbs (into (doall (map #(aquire-db (format "200712%02d" %)) (range 3)))
-				     (doall (map #(aquire-db (format "200712%02d" %)) (range 3))))]
-		       (is (= 3 (count @opened-wdata)))
-		       (is (= 1 (count @keep-open-data)))
-		       (is (zero? (count @unused-data-queue)))
-		       (is (= 3 (count @users-per-data)))
-		       (is (= 6 (apply + (vals @users-per-data))))
-		       (mark-as-not-always 20071201)
-		       (is (= 3 (count @opened-wdata)))
-		       (is (zero? (count @keep-open-data)))
-		       (is (zero? (count @unused-data-queue)))
-		       (is (= 3 (count @users-per-data)))
-		       (is (= 6 (apply + (vals @users-per-data))))
-		       (release-db 20071201)
-		       (is (= 3 (count @opened-wdata)))
-		       (is (zero? (count @keep-open-data)))
-		       (is (zero? (count @unused-data-queue)))
-		       (is (= 3 (count @users-per-data)))
-		       (is (= 5 (apply + (vals @users-per-data))))
-		       (release-db 20071201)
-		       (is (= 3 (count @opened-wdata)))
-		       (is (zero? (count @keep-open-data)))
-		       (is (= 1 (count @unused-data-queue)))
-		       (is (= 2 (count @users-per-data)))
-		       (is (= 4 (apply + (vals @users-per-data))))
-		       (mark-as-always-opened 20071201)
-		       (is (= 3 (count @opened-wdata)))
-		       (is (= 1 (count @keep-open-data)))
-		       (is (= 1 (count @unused-data-queue)))
-		       (is (= 2 (count @users-per-data)))
-		       (is (= 4 (apply + (vals @users-per-data))))
-		       (dotimes [_ 2](release-db 20071200))
-		       (dotimes [_ 2](release-db 20071202))
-		       (is (= 3 (count @opened-wdata)))
-		       (is (= 1 (count @keep-open-data)))
-		       (is (= 3 (count @unused-data-queue)))
-		       (is (= 0 (count @users-per-data)))
-		       (is (= 0 (apply + (vals @users-per-data))))
-		       )))
-     (finally (rmdir-recursive tmp))))))
-
-;(defn test-ns-hook []
-;  (test-compression))
-
-(deftest test-compression
-  (let [tmp (make-temp-dir)]
-    (try
-      (let [df (SimpleDateFormat. "yyyyMMdd HHmmss")
-	    dparse #(.parse df %) 
-       
-	   name1 {:host "1" :counter "3" :category "2" :instance "4"}
-	   ]
-       (using-db-env tmp
-		     (add-to-db 2 (dparse "20070101 120001") name1)
-		     (add-to-db 3 (dparse "20070101 120002") name1)
-		     (add-to-db 4 (dparse "20070101 120003") name1)
-		     (is (= 3 (records 20070101)))
-		     (println (compress-data 20070101 (fn [] true)))
-		     (is (= 3 (records 20070101)))
-		     (using-day 20070101 false
-				(println (compress-data 20070101 (fn [] false))))
-		     (is (= 3 (records 20070101)))
-		     (println (compress-data 20070101 (fn [] false)))
-		     (is (= 1 (records 20070101)))
-		     (add-to-db 5 (dparse "20070101 120004") name1)
-		     (is (= 2 (records 20070101)))
-		     (println (compress-data 20070101 (fn [] false)))
-		     (is (= 1 (records 20070101)))
-		     ))
-    (finally (rmdir-recursive tmp))))
-  )
-
-(deftest testindices
-  (reset! current-day-indexes {})
-  (reset! lru-days-for-indices [])
-  (let [df (SimpleDateFormat. "yyyyMMdd HHmmss")]
-
-      (let [data (assoc {} :host "1" :counter "3" :category "2" :instance "4")]
-	
-	(let [bytes (to-bytes 20071126 23.0 (.parse df "20071126 033332") data)]
-	  (is (= (.parse df "20071126 033332") (Date. (time-stamp-of bytes))))
-	  (is (= 0 (host-index-of bytes)))
-	  (is (= 1 (category-index-of bytes)))
-	  (is (= 2 (counter-index-of bytes)))
-	  (is (= 3 (instance-index-of bytes)))
-	  (is (= data (first (from-bytes bytes 20071126))))
-	  (is (= (reduce #( conj %1 (name-for-index 20071126 %2)) [] (range 4) )
-		 ["1" "2" "3" "4"]))
-	  (is (= (reduce #( conj %1 (index-for-name 20071126 %2)) [] ["1" "2" "3" "4"] )
-		 (range 4)))
-	   ))
-      
-
-      (let [data (assoc {} :host "1" :counter "3" :category "2" :instance "4" :oljemagnat "magnaten")]
-	(let [bytes (to-bytes 20071127 23.0 (.parse df "20071127 033332") data)]
-	  (is (= data (first (from-bytes bytes 20071127))))
-	  (is (= (reduce #( conj %1 (name-for-index 20071127 %2)) [] (range 6) )
-		 ["1" "2" "3" "4" "oljemagnat" "magnaten"]))
-	  (is (= (reduce #( conj %1 (index-for-name 20071127 %2)) [] ["1" "2" "3" "4" "oljemagnat" "magnaten"] )
-		 (range 6)))))))
-
-
-(deftest testindices-with-persistence
-  (let [tmp (make-temp-dir)]
-    (try
-     (let [df (SimpleDateFormat. "yyyyMMdd HHmmss")]
-       
-       (let [data (assoc {} :host "1" :counter "3" :category "2" :instance "4")
-	     another-data (assoc {} :host "1" :counter "3" :category "2" :instance "4")
-	     some-more-data (assoc {} :host "1" :counter "33" :category "2" :instance "44")
-	     even-more-data (assoc {} :host "1" :counter "33" :category "2" :instance "44" :gurkmeja "meja")]
-	 (using-db-env tmp
-		       (let [bytes (to-bytes 20071126 23 (.parse df "20071126 033332") data )] 
-			 (is (= data (first (from-bytes bytes 20071126))))
-			 (is (= 23.0 (val (first (second (from-bytes bytes 20071126))))))
-			 (let [another-bytes (to-bytes 20071125 2 (.parse df "20071125 033332") another-data )]
-			   (is (= 23.0 (val (first (second (from-bytes bytes 20071126))))))
-			   (is (= 2.0 (val (first (second (from-bytes another-bytes 20071125))))))
-			   (is (= 23.0 (val (first (second (from-bytes bytes 20071126))))))
-			   (is (= another-data (first (from-bytes another-bytes 20071125))))
-			   (let [some-more-bytes (to-bytes 20071125 3.0 (.parse df "20071125 033332") some-more-data )]
-			     (is (= 2.0 (val (first (second (from-bytes another-bytes 20071125))))))
-			     (is (= 3.0 (val (first (second (from-bytes some-more-bytes 20071125))))))
-			     (is (= 23.0 (val (first (second (from-bytes bytes 20071126))))))
-			     (is (= 2.0 (val (first (second (from-bytes another-bytes 20071125))))))
-			     (is (= 3.0 (val (first (second (from-bytes some-more-bytes 20071125))))))
-			     (is (= #{0 1 2 3 4 5} 
-				    (set (for [x [bytes another-bytes some-more-bytes] 
-					       y [host-index-of category-index-of counter-index-of instance-index-of]]
-					   (y x)))))
-			     (is (= #{0 1 2 3} 
-				    (set (for [x [another-bytes bytes] 
-					       y [host-index-of category-index-of counter-index-of instance-index-of]]
-					   (y x)))))
-			     (is (= some-more-data (first (from-bytes some-more-bytes 20071125))))
-			     (let [even-more-bytes (to-bytes 20071125 3.0 (.parse df "20071125 033332") even-more-data)]
-			       (is (= even-more-data (first (from-bytes even-more-bytes 20071125))))))))
-		       (is (= 6 (index-for-name 20071125 "gurkmeja")))
-		       (reset! current-day-indexes {})
-		       (reset! lru-days-for-indices [])
-		       (let [some-more-bytes (to-bytes 20071125 3.0 (.parse df "20071125 033332") some-more-data )]
-			 (is (= 6 (index-for-name 20071125 "gurkmeja")))
-			 (is (every? 
-			      (reduce #(conj %1 (%2 some-more-bytes)) 
-				      #{} 
-				      [host-index-of category-index-of counter-index-of instance-index-of])
-			      #{4 5}))
-			 (is (= some-more-data (first (from-bytes some-more-bytes 20071125))))
-			 (let [bytes (to-bytes 20071126 23 (.parse df "20071126 033332") data )]
-			   (is (= data (first (from-bytes bytes 20071126))))
-			   (is (= 23.0 (val (first (second (from-bytes bytes 20071126)))))))
-			 
-			 ))))
-     (finally (rmdir-recursive tmp)))))
-
-(deftest dayname-test
-  (let [tmp (make-temp-dir)
-	df (SimpleDateFormat. "yyyyMMdd HHmmss")
-	dparse #(. df parse %)]
-    (try
-     (using-db-env tmp 
-		   (is (nil? (get-from-dayname 20071120)))
-		   (add-to-dayname 20071120 "Nisse")
-		   
-		   (is (= "Nisse" (get-from-dayname 20071120)))
-		   (add-to-dayname 20071120 "Olle")
-		   (is (= "Olle" (get-from-dayname 20071120)))
-		   (add-to-dayname 20071120 #{{:a "Hum" :b "Di"} {:a "Ni" :b "Di"}})
-		   (is (= #{{:a "Hum" :b "Di"} {:a "Ni" :b "Di"}} (get-from-dayname 20071120)))
-		   (is (nil? (get-from-dayname 20071121)))
-		   (let [all (all-dates)]
-		     (is (= 1 (count all)) "Only one")
-		     (is (= 20071120 (first all)))
-		     (remove-date (first all))
-		     (is (empty? (all-dates))))
-		   (add-to-dayname 20071120 "Olle")
-		   (add-to-dayname 20071121 "Nisse")
-		   (add-to-dayname 20071122 "Arne")
-		   (let [all (all-dates)]
-		     (is (= 3 (count all)))
-		     (is (= 20071121 (second all)))) 
-		   
-		   (remove-date 20071121)
-		   (let [all (all-dates)]
-		     (is (= 2 (count all)))
-		     (is (= 20071122 (second all)))))
-     (finally  (rmdir-recursive tmp)))))
-
-(deftest newstuff
-  (let [tmp (make-temp-dir)]
+	key1 {:olle "ett" :nisse "chainsaw"}
+	key2 {}
+	key3 {:saft "skalle"}
+	day1 20101123
+	day2 20101124]
     (try
       (using-db-env tmp
-	(let [db (db-open *db-env* "testing" :allow-create true :sorted-duplicates true)
-	     cur (db-cursor-open db)]
-	     (is (= OperationStatus/SUCCESS (db-put db 1 1)))
-	     (is (= OperationStatus/SUCCESS (db-put db 2 1)))
-	     (is (= OperationStatus/SUCCESS (db-put db 3 1)))
-	     (is (= OperationStatus/SUCCESS (db-put db 0 1)))
-	     (is (= OperationStatus/SUCCESS (db-put db 1 2)))
-	     (is (= OperationStatus/SUCCESS (db-put db 1 0)))
-	     (db-cursor-first cur)
-	     (is (= [1 0] (db-cursor-search cur 1)))
-	     (is (= [1 1] (db-cursor-next cur)))
-	     (db-cursor-close cur)
-	     (db-close db)
-	     (db-env-remove-db *db-env* "testing")))
-      (finally (rmdir-recursive tmp)))))
+		    
+		    (is (nil? (get-from-db get-values day1 key1)))
+		    (add-to-db 3 (dparse "20101123 012233") key1)
+		    (is (= {(dparse "20101123 012233") 3}
+			 (get-from-db get-values 20101123  key1)))
+		    (add-to-db 4 (dparse "20101123 012234") key1)
+		    (add-to-db 3 (dparse "20101124 012234") key1)
+		    (add-to-db 44 (dparse "20101123 012234") key2)
+		    (is (= {(dparse "20101123 012234") 4
+			    (dparse "20101123 012233") 3}
+			   (get-from-db get-values day1  key1)))
+		    (add-to-db 5 (dparse "20101123 012235") key1)
+
+		    (is (= {(dparse "20101123 012234") 4
+			    (dparse "20101123 012235") 5
+			    (dparse "20101123 012233") 3}
+			   (get-from-db get-values day1  key1)))
+		    (is (= { (dparse "20101123 012234") 44}
+			   (get-from-db get-values day1  key2)))
+		    (is (= 4 (records day1)))
+		    (compress-data day1)
+		    (is (= {(dparse "20101123 012234") 4
+			    (dparse "20101123 012235") 5
+			    (dparse "20101123 012233") 3}
+			   (get-from-db get-values day1  key1)))
+		    (is (= { (dparse "20101123 012234") 44}
+			   (get-from-db get-values day1  key2)))
+
+
+		    (is (= 2 (records day1)))
+		    (is (= #{key1 key2} (set (names day1))))
+		    (remove-date day1)
+		    (is (nil? (records day1)))
+		    (is (= #{key1} (set (names day2))))
+		    (is (nil? (names day1)))
+		    (remove-date day1)
+		    (is (= {(dparse "20101124 012234") 3}
+			   (get-from-db get-values day2 key1)))
+		    )
+      (finally  (rmdir-recursive tmp)))))

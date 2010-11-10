@@ -1,10 +1,13 @@
 (ns monitor.commongui
+  (:use (monitor calculations))
+  (:use [clojure.contrib import-static])
   (:import (javax.swing.table AbstractTableModel))
   (:import (java.util Date))
   (:import (java.awt Color))
   (:import (java.awt.event ActionListener))
-  (:import (monitor ServerInterface$Transform ServerInterface$Granularity))
-)
+  )
+
+(import-static java.util.Calendar MINUTE SECOND)
 
 (def new-window-fn (atom (fn [_])))
 
@@ -43,51 +46,63 @@
 			 (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
 	       (sorted-map) names))))
 
+(defn- transform
+  ([data func granularity]
+     (let [gran (condp = granularity
+		    "All Data" SECOND
+		    "Minute" MINUTE
+		    "Hour" HOUR
+		    "Day" DAY)
+	   fun (condp = func
+		   "Raw" (fn [e] e)
+		   "Average/Minute" (fn [e] (sliding-average e 1 MINUTE gran))
+		   "Average/Hour" (fn [e] (sliding-average e 1 HOUR gran))
+		   "Average/Day" (fn [e] (sliding-average e 1 DAY gran))
+		   "Mean/Minute" (fn [e] (sliding-mean e 1 MINUTE gran))
+		   "Mean/Hour" (fn [e] (sliding-mean e 1 HOUR gran))
+		   "Mean/Day" (fn [e] (sliding-mean e 1 DAY gran))
+		   "Min/Minute" (fn [e] (sliding-min e 1 MINUTE gran))
+		   "Min/Hour" (fn [e] (sliding-min e 1 HOUR gran))
+		   "Min/Day" (fn [e] (sliding-min e 1 DAY gran))
+		   "Max/Minute" (fn [e] (sliding-max e 1 MINUTE gran))
+		   "Max/Hour" (fn [e] (sliding-max e 1 HOUR gran))
+		   "Max/Day" (fn [e] (sliding-max e 1 DAY gran))
+		   "Change/Second" (fn [e] (sliding-per- e gran SECOND))
+		   "Change/Minute" (fn [e] (sliding-per- e gran MINUTE))
+		   "Change/Hour" (fn [e] (sliding-per- e gran HOUR))
+		   (throw (IllegalArgumentException. (str func " not yet implemented"))))]
+       (if (not= func "Raw") 
+	 (into (sorted-map) (fun data))
+	 data)))
+  ([data func]
+     (let [fun (condp = func
+		   "Raw" (fn [e] e)
+		   "Average" (fn [e] (sliding-average e 1 MINUTE MINUTE))
+		   "Mean" (fn [e] (sliding-mean e 1 MINUTE MINUTE))
+		   "Change/Second" (fn [e] (sliding-per- e SECOND SECOND))
+		   "Change/Minute" (fn [e] (sliding-per- e MINUTE MINUTE))
+		   (throw (IllegalArgumentException. (str func " not yet implemented"))))]
+        (if (not= func "Raw") 
+	 (into (sorted-map) (fun data))
+	 data))))
+
 (defn get-data 
   ([from to names func-string granularity-string server]
      (try
-       (let [func (condp = func-string
-		      "Raw" ServerInterface$Transform/RAW
-		      "Average/Minute" ServerInterface$Transform/AVERAGE_MINUTE
-		      "Average/Hour" ServerInterface$Transform/AVERAGE_HOUR
-		      "Average/Day" ServerInterface$Transform/AVERAGE_DAY
-		      "Mean/Minute" ServerInterface$Transform/MEAN_MINUTE
-		      "Mean/Hour" ServerInterface$Transform/MEAN_HOUR
-		      "Mean/Day" ServerInterface$Transform/MEAN_DAY
-		      "Min/Minute" ServerInterface$Transform/MIN_MINUTE
-		      "Min/Hour" ServerInterface$Transform/MIN_HOUR
-		      "Min/Day" ServerInterface$Transform/MIN_DAY
-		      "Max/Minute" ServerInterface$Transform/MAX_MINUTE
-		      "Max/Hour" ServerInterface$Transform/MAX_HOUR
-		      "Max/Day" ServerInterface$Transform/MAX_DAY
-		      "Change/Second" ServerInterface$Transform/PER_SECOND
-		      "Change/Minute" ServerInterface$Transform/PER_MINUTE
-		      "Change/Hour" ServerInterface$Transform/PER_HOUR)
-	     granularity (condp = granularity-string
-			     "All Data" ServerInterface$Granularity/SECOND
-			     "Minute" ServerInterface$Granularity/MINUTE
-			     "Hour" ServerInterface$Granularity/HOUR
-			     "Day" ServerInterface$Granularity/DAY)
-	     stringed-names (interleave 
+       (let [stringed-names (interleave 
 			    (map #(name (first %)) (partition 2 names)) 
 			    (map #(second %) (partition 2 names)))
-	     data (.rawData (server) from to (java.util.ArrayList. stringed-names) func granularity)]
+	     data (.rawData (server) from to (java.util.ArrayList. stringed-names))]
 	 (reduce (fn [result a-data] 
-		  (assoc result (names-as-keyworded (key a-data)) (val a-data))) 
+		   (assoc result
+		     (names-as-keyworded (key a-data))
+		     (transform (val a-data) func-string granularity-string))) 
 		{} data))
      (catch Exception e (println e)
 	    {})))
   ([names func-string  server]
      (try
-       (let [func (condp = func-string
-		      "Raw" ServerInterface$Transform/RAW
-		      "Average" ServerInterface$Transform/AVERAGE_MINUTE
-		      "Mean" ServerInterface$Transform/MEAN_MINUTE
-		      "Change/Second" ServerInterface$Transform/PER_SECOND
-		      "Change/Minute" ServerInterface$Transform/PER_MINUTE
-		      "Change/Hour" ServerInterface$Transform/PER_HOUR)
-	     
-	     stringed-names-in-hashmaps (reduce 
+       (let [stringed-names-in-hashmaps (reduce 
 					(fn [r i]
 					  (conj r (java.util.HashMap. 
 						   (reduce 
@@ -95,9 +110,9 @@
 						      (assoc a (name (key b)) (val b))) 
 						    {} i)))
 					  ) [] names)
-	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps) func)]
+	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps))]
 	(reduce (fn [result a-data] 
-		  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (val a-data)))) 
+		  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (transform (val a-data) func-string)))) 
 		{} data))
      (catch Exception e (println e) {}))))
 

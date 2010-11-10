@@ -21,7 +21,7 @@
 
 (defn in-env 
   ([live-minutes history-days history-directory client-port client-transfer-port]
-     (when (not (System/getProperty "nogui"))
+     (when (not (System/getProperty "java.awt.headless"))
        (shutdown-button "Monitor server"))
      (shutdown-jmx "monitor.server")
      
