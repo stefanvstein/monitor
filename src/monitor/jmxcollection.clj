@@ -10,6 +10,7 @@
 					;for repl purposes
   (:use (clojure stacktrace inspector)))
 
+(def *last-last-gc-info* (atom (sorted-map)))
 
 (defn- object-names [#^MBeanServerConnection server]
   (. server queryNames nil nil))
@@ -64,6 +65,7 @@
 								       (when-let [#^com.sun.management.GcInfo gcinfo (hasGcInfo the-attribute)]
 									 (let [#^java.util.Map before-gc (.getMemoryUsageBeforeGc gcinfo)
 									       #^java.util.Map after-gc (.getMemoryUsageAfterGc gcinfo)
+									       timestamp (.getEndTime gcinfo)
 									       result [{:category "GarbageCollector"
 											:counter "Last Duration"
 											:section name
@@ -104,6 +106,7 @@
 														   :host (remote-hostname)
 														   :section name}
 													   (double (.getUsed #^java.lang.management.MemoryUsage (val area))))) [] after-gc)]
+									   (swap! *last-last-gc-info* assoc timestamp [usage-before usage-after committed-after max-after])
 									   (concat result usage-before usage-after committed-after max-after))
 									 )))))
 						    result)
@@ -113,7 +116,8 @@
 	  {} (object-names server))))
 
 (defn collector-values [collector-keys #^MBeanServerConnection server]
-  (reduce (fn [result a-key] 
+  (binding [*last-last-gc-info* (atom (sorted-map))]
+  (let [result (reduce (fn [result a-key] 
 	    (let [attributeList (.asList (.getAttributes server (key a-key) (into-array ["Name" 
 							    "CollectionCount" 
 							    "CollectionTime" 
@@ -125,7 +129,20 @@
 			    (apply assoc re r)
 			    re))) 
 		      result (val a-key)))) 
-	  {} collector-keys))
+		       {} collector-keys)]
+
+    (if (seq @*last-last-gc-info*)
+      (reduce (fn [r e]
+		(reduce (fn [r2 f]
+			  (let [to (assoc (first f) :section "Latest")
+				v (second f)]
+			    (assoc r2 to v)))
+			r
+			(partition 2 e)))
+	      result
+	      (val (first @*last-last-gc-info*)))
+      result))))
+
 
 (defn memory-fns [#^MBeanServerConnection server]
   (reduce (fn [r #^ObjectName object-name] 
