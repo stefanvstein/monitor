@@ -21,6 +21,11 @@
   (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond))
   (:import (monitor SplitDateSpinners)))
 
+(defn- date-order [d1 d2]
+  (if (< (.getTime d1) (.getTime d2))
+    [d1 d2]
+    [d2 d1]))
+
 (defn on-update
   "Returns panel and models"
   [names add-buttons]
@@ -72,7 +77,7 @@
 )
 
 			
-(defn on-add-to-analysis [from to shift name-values all-names func-string granularity-string graph colors chart add-to-table add-column statusbar server]
+(defn on-add-to-analysis [from to shift name-values all-names func-string graph colors chart add-to-table add-column statusbar server]
   (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
 			    (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries))))
 	start-chart-notify (fn start-chart-notify [] (dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
@@ -97,10 +102,10 @@
 				  serie))
 	updatechart (fn [data] (SwingUtilities/invokeLater 
 				(fn []
-				  
+				  (try
 				  (stop-chart-notify)
 				  (dorun (map (fn [data]
-						(let [data-key (let [dk (assoc (key data) :type func-string :granularity granularity-string)]
+						(let [data-key (let [dk (assoc (key data) :type func-string)]
 								 (if (= 0 shift)
 								   dk
 								   (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
@@ -115,11 +120,23 @@
 								   (create-new-time-serie data-key identifier))
 						      data-from-serie (time-serie-to-sortedmap time-serie)
 						      data-with-new-data (merge data-from-serie data-values)
-						      nan-distance (condp = granularity-string
-								       "All Data" (* 30 1000)
-								       "Minute" (* 2 60 1000)
-								       "Hour" (* 2 60 60 1000)
-								       "Day" (* 2 24 60 60 1000))
+						      nan-distance (condp = func-string
+								       "Raw" (* 30 1000)
+								       "Change/Second" (* 30 1000)
+								       "Average/Minute" (* 2 60 1000)
+								       "Mean/Minute" (* 2 60 1000)
+								       "Min/Minute" (* 2 60 1000)
+								       "Max/Minute" (* 2 60 1000)
+								       "Change/Minute" (* 2 60 1000)
+								       "Average/Hour" (* 2 60 60 1000)
+								       "Mean/Hour" (* 2 60 60 1000)
+								       "Min/Hour" (* 2 60 60 1000)
+								       "Max/Hour" (* 2 60 60 1000)
+								       "Change/Hour" (* 2 60 60 1000)
+								       "Average/Day" (* 2 24 60 60 1000)
+								       "Mean/Day" (* 2 24 60 60 1000)
+								       "Min/Day" (* 2 24 60 60 1000)
+								       "Max/Day" (* 2 24 60 60 1000))
 						      data-with-nans (with-nans data-with-new-data nan-distance)
 						      temp-serie (doto (TimeSeries. "") (.setNotify false))
 						      new-serie (reduce (fn [r i]
@@ -134,9 +151,12 @@
 						  (.addAndOrUpdate time-serie new-serie)))
 					;	  (.add time-serie new-serie)))
 					      data))
-				  (start-chart-notify))))]
+				  (start-chart-notify)
+				  (catch Exception e
+				    (.printStackTrace e))))))]
     
-	   (future  	     
+    (future
+      (try
 	     (if (= "Raw" func-string)
 	       (let [days (full-days-between from to)
 		     current (atom 0)]
@@ -147,7 +167,6 @@
 						      (second e)
 						      name-values
 						      func-string
-						      granularity-string
 						      server))))
 			     days)))
 		 
@@ -168,20 +187,21 @@
 					       (reduce (fn [v e]
 							 (conj v (key e) (val e))) [] e)
 					       func-string
-					       granularity-string
 					       server))))
 		      
 		      names-of-interest))))
 
 	       (.setText statusbar " ")
-)))
+	       
+      (catch Exception e
+	(.printStackTrace e))))))
 
 
 
 (defn analysis-add-dialog [contents server]
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
 	from-model (let [d @(:from contents)
-			   
+			 
 			c (Calendar/getInstance)
 		     
 			startd (.getTime (doto c
@@ -214,230 +234,191 @@
 					 (.add Calendar/YEAR +1)))]
 		     (SplitDateSpinners. d endd startd ))		
 
-	granularity-combo (doto (JComboBox. (to-array ["All Data" "Minute" "Hour" "Day"]))
-			    (.setEnabled false))
-
-	func-combo (let [c (JComboBox. (to-array ["Raw" "Average/Minute" "Average/Hour" "Average/Day"
+	func-combo (JComboBox. (to-array ["Raw" "Average/Minute" "Average/Hour" "Average/Day"
 						     "Mean/Minute" "Mean/Hour" "Mean/Day"
 						     "Min/Minute" "Min/Hour" "Min/Day"
 						     "Max/Minute" "Max/Hour" "Max/Day"
 						     "Change/Second"
 						     "Change/Minute"
-						     "Change/Hour"]))]
-		     (.addActionListener c (proxy [ActionListener] []
-			      (actionPerformed [_]
-					       (let [fun (.getSelectedItem (.getModel c ))
-						     gran-model (.getModel granularity-combo)]
-						 (if (some #{fun} ["Raw" "Change/Second"
-								  "Change/Minute"
-								  "Change/Hour"])
-						   (.setEnabled granularity-combo false)
-						   (do (.setEnabled granularity-combo true)
-						   (cond
-						    (some #{fun} ["Average/Minute" 
-								  "Mean/Minute" 
-								  "Min/Minute"
-								  "Max/Minute"])
-						    (.setModel granularity-combo (DefaultComboBoxModel. (to-array ["All Data" "Minute"])))
-						    (some #{fun} ["Average/Hour"
-								  "Mean/Hour" 
-								  "Min/Hour" 
-								  "Max/Hour"])
-						    (.setModel granularity-combo (DefaultComboBoxModel. (to-array ["All Data" "Minute" "Hour"])))
-						    (some #{fun} ["Average/Day"
-								  "Mean/Day" 
-								  "Min/Day" 
-								  "Max/Day"])
-						    (.setModel granularity-combo (DefaultComboBoxModel. (to-array ["All Data" "Minute" "Hour" "Day"])))
-						    )))))))
-		     c)
-		     
+						     "Change/Hour"]))
 	all-names (atom [])
 	center-panel (atom (JPanel.))	
 	combomodels-on-center (atom {})
 	shift-check (doto (JCheckBox. "Shift start to:")
 		      (.addItemListener (proxy [ItemListener] []
 				    (itemStateChanged [e] (.enable shift-model (= ItemEvent/SELECTED (.getStateChange e)))))))
-		      
-	onAdd (fn [contents]
-		(reset! (:from contents) (.getDate from-model))
-		(reset! (:to contents) (.getDate to-model))
-		(let [name-values (reduce (fn [result name-combomodel] 
-					    (let [the-value (.getSelectedItem (val name-combomodel))]
-					      (if (not (= "" the-value))
-						(conj result (key name-combomodel) the-value)
-						result)))
-					  []  @combomodels-on-center)
-		      from (.getDate from-model)
-		      to (.getDate to-model)
 
-		      resulting-number-of-graphs (fn [panel names]
-					      (let [selection (reduce (fn [r e]
-									(assoc r (keyword (.getName e)) (.getSelectedItem e)))
-								      {}
-								      (filter #(not (= "" (.getSelectedItem %)))
-									      (filter #(.isEnabled %)
-										      (filter #(instance? JComboBox %)
-											      (vec (.getComponents panel))))))]
-						(count (filter #(= (select-keys % (keys selection)) selection) names))))
-		      are-you-sure (fn are-you-sure [from to func-string granularity-string]
-				     (if (< to from)
-				       (are-you-sure to from)
-				       (if (cond
-					    (and (< (* 1000 60 60 26) (- to from))
-						 (= "Raw" func-string))
-					    true
-					    (and (< (* 1000 60 60 24 2) (- to from))
-						 (some #{granularity-string} ["Minute" "All Data"]))
-					    true
-					    (and (< (* 1000 60 60 24 7) (- to from))
-						 (some #{granularity-string} ["Hour" "Minute" "All Data"]))
-					    true
-					    (and (< (* 1000 60 60 24 50) (- to from))
-						 (some #{granularity-string} ["Day" "Hour" "Minute" "All Data"]))
-					    true
-					    (< 10  (resulting-number-of-graphs @center-panel @all-names))
-					    true
-					    true false)
-					 (= JOptionPane/YES_OPTION (JOptionPane/showConfirmDialog dialog "Are you sure, this appear to be a lot of data?" "Are you sure?" JOptionPane/YES_NO_OPTION))
-					 true)
-				       ))]
+
+	
+	onAdd (fn [contents]
+		(let [dates-in-order (date-order (.getDate from-model) (.getDate to-model))]
+		  (reset! (:from contents) (first dates-in-order))
+		  (reset! (:to contents) (second dates-in-order))
+		  (let [name-values (reduce (fn [result name-combomodel] 
+					      (let [the-value (.getSelectedItem (val name-combomodel))]
+						(if (not (= "" the-value))
+						  (conj result (key name-combomodel) the-value)
+						  result)))
+					    []  @combomodels-on-center)
+			
+			from (first dates-in-order)
+			to (second dates-in-order)
+			
+			resulting-number-of-graphs (fn [panel names]
+						     (let [selection (reduce (fn [r e]
+									       (assoc r (keyword (.getName e)) (.getSelectedItem e)))
+									     {}
+									     (filter #(not (= "" (.getSelectedItem %)))
+										     (filter #(.isEnabled %)
+											     (filter #(instance? JComboBox %)
+												     (vec (.getComponents panel))))))]
+						       (count (filter #(= (select-keys % (keys selection)) selection) names))))
+			are-you-sure (fn are-you-sure [from to func-string]
+				       (if (< to from)
+					 (are-you-sure to from func-string)
+					 (if (cond
+					      (and (< (* 1000 60 60 26) (- to from))
+						   (= "Raw" func-string))
+					      true
+					      (and (< (* 1000 60 60 24 2) (- to from))
+						   (some #{func-string} ["Average/Minute" "Mean/Minute" "Max/Minute" "Min/Minute" "Change/Minute" "Change/Second" "Raw"]))
+					      true
+					      (and (< (* 1000 60 60 24 7) (- to from))
+						   (some #{func-string} ["Average/Hour" "Mean/Hour" "Max/Hour" "Min/Hour" "Change/Hour" "Average/Minute" "Mean/Minute" "Max/Minute" "Min/Minute" "Change/Minute" "Change/Second" "Change/Hour" "Raw"]))
+					      true
+					      (< (* 1000 60 60 24 50) (- to from))
+					      true
+					      (< 10  (resulting-number-of-graphs @center-panel @all-names))
+					      true
+					      true false)
+					   (= JOptionPane/YES_OPTION (JOptionPane/showConfirmDialog dialog "Are you sure, this appear to be a lot of data?" "Are you sure?" JOptionPane/YES_NO_OPTION))
+					   true)
+					 ))
 					;
-		  (let [gran (condp = (.getSelectedItem func-combo)
-				 "Raw" "All Data"
-				 "Change/Second" "All Data"
-				 "Change/Minute" "Minute"
-				 "Change/Hour" "Hour"
-				 (.getSelectedItem func-combo))
-			fun (.getSelectedItem func-combo)]
-		    (when (are-you-sure (.getTime from) (.getTime to) fun gran)
-		      (let [shift (if (.isSelected (.getModel shift-check))
+			fun (.getSelectedItem func-combo)
+			shift (if (.isSelected (.getModel shift-check))
 				    (- (.getTime (.getDate shift-model)) (.getTime from))
 				    0)]
+		    (when (are-you-sure (.getTime from) (.getTime to) fun)
 			(on-add-to-analysis from
 					    to
 					    shift
 					    name-values
 					    @all-names
 					    fun
-					    gran
 					    (:time-series contents)
 					    (:colors contents)
 					    (:chart contents)
 					    (:add-to-table contents)
 					    (:add-column contents)
 					    (:status-label contents)
-					    server))))))
-	
+					    server)))))
+		
 	add (let [add (JButton. "Add")]
 	      (.setEnabled add false)
 	      add)
 	add-new-window (let [add (JButton. "Add New")]
 			 (.setEnabled add false)
 			 add)
-	close (JButton. "Close")
-
+	close (JButton. "Close")]
 	
-    
-	]
-    
-
-    (doto dialog
-      (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
-      (.setResizable false))
-    
-    (.addActionListener close (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
-    (.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd contents))))
-    (.addActionListener add-new-window (proxy [ActionListener] []
-					 (actionPerformed [event]
-							  (onAdd (@new-window-fn true))
-							  )))
-    
-    (let [contentPane (.getContentPane dialog)]
-      (. contentPane add @center-panel BorderLayout/CENTER)
-      (. contentPane add (doto (JPanel.)
-			   (.setLayout (FlowLayout. FlowLayout/CENTER))
-			   (.add func-combo)
-			   (.add granularity-combo)
-			   (.add add)
-			   (.add add-new-window)
-			   (.add close)) 
-	   BorderLayout/SOUTH)
-
-
-      (let [panel (JPanel.)
-	    from-panel (JPanel.)
-	    to-panel (JPanel.)
-	    update-panel (JPanel.)
-	    shift-panel (JPanel.)
-	    time-panel (JPanel.)]
 	
-	(. panel setLayout (BoxLayout. panel BoxLayout/PAGE_AXIS))
-	(. contentPane add panel BorderLayout/NORTH)
-	(doto panel
-	  (.add from-panel)
-	  (.add to-panel )
-	  (.add shift-panel)
-	  (.add update-panel))
-	(doto from-panel
-	  (.setLayout (FlowLayout. FlowLayout/TRAILING ))
-	  (.add (JLabel. "From date:"))
-	  (.add (.yearSpinner from-model))
-	  (.add (.monthSpinner from-model))
-	  (.add (.daySpinner from-model))
-	  (.add (JLabel. "time:"))
-	  (.add (.hourSpinner from-model))
-	  (.add (.minuteSpinner from-model))
-	  (.add (.secondSpinner from-model)))
-
-	(doto to-panel
-	  (.setLayout (FlowLayout. FlowLayout/TRAILING ))
-	  (.add (JLabel. "To date:"))
-	  (.add (.yearSpinner to-model))
-	  (.add (.monthSpinner to-model))
-	  (.add (.daySpinner to-model))
-	  (.add (JLabel. "time:"))
-	  (.add (.hourSpinner to-model))
-	  (.add (.minuteSpinner to-model))
-	  (.add (.secondSpinner to-model)))
-	(doto shift-panel 
-      	  (.setLayout (FlowLayout. FlowLayout/TRAILING ))
-	  (.add shift-check)
-	  (.add (.yearSpinner shift-model))
-	  (.add (.monthSpinner shift-model))
-	  (.add (.daySpinner shift-model))
-	  (.add (JLabel. "time:"))
-	  (.add (.hourSpinner shift-model))
-	  (.add (.minuteSpinner shift-model))
-	  (.add (.secondSpinner shift-model)))
-	(.enable shift-model false)
+	(doto dialog
+	  (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
+	  (.setResizable false))
+	
+	(.addActionListener close (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
+	(.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd contents))))
+	(.addActionListener add-new-window (proxy [ActionListener] []
+					     (actionPerformed [event]
+							      (onAdd (@new-window-fn true))
+							      )))
+	
+	(let [contentPane (.getContentPane dialog)]
+	  (. contentPane add @center-panel BorderLayout/CENTER)
+	  (. contentPane add (doto (JPanel.)
+			       (.setLayout (FlowLayout. FlowLayout/CENTER))
+			       (.add func-combo)
+			       (.add add)
+			       (.add add-new-window)
+			       (.add close)) 
+	     BorderLayout/SOUTH)
 	  
-	(.setLayout update-panel (FlowLayout. FlowLayout/TRAILING ))
-	  (.add update-panel (let [update (JButton. "Update")
-				   onUpdate (fn [] 
-					      (let [from (. from-model getDate)
-						    to (. to-model getDate)]
-						(let [names (get-names from to server)]
-						  (swap! all-names (fn [_]
-								     (reduce (fn [r e]
+	  
+	  (let [panel (JPanel.)
+		from-panel (JPanel.)
+		to-panel (JPanel.)
+		update-panel (JPanel.)
+		shift-panel (JPanel.)
+		time-panel (JPanel.)]
+	    
+	    (. panel setLayout (BoxLayout. panel BoxLayout/PAGE_AXIS))
+	    (. contentPane add panel BorderLayout/NORTH)
+	    (doto panel
+	      (.add from-panel)
+	      (.add to-panel )
+	      (.add shift-panel)
+	      (.add update-panel))
+	    (doto from-panel
+	      (.setLayout (FlowLayout. FlowLayout/TRAILING ))
+	      (.add (JLabel. "From date:"))
+	      (.add (.yearSpinner from-model))
+	      (.add (.monthSpinner from-model))
+	      (.add (.daySpinner from-model))
+	      (.add (JLabel. "time:"))
+	      (.add (.hourSpinner from-model))
+	      (.add (.minuteSpinner from-model))
+	      (.add (.secondSpinner from-model)))
+	    
+	    (doto to-panel
+	      (.setLayout (FlowLayout. FlowLayout/TRAILING ))
+	      (.add (JLabel. "To date:"))
+	      (.add (.yearSpinner to-model))
+	      (.add (.monthSpinner to-model))
+	      (.add (.daySpinner to-model))
+	      (.add (JLabel. "time:"))
+	      (.add (.hourSpinner to-model))
+	      (.add (.minuteSpinner to-model))
+	      (.add (.secondSpinner to-model)))
+	    (doto shift-panel 
+	      (.setLayout (FlowLayout. FlowLayout/TRAILING ))
+	      (.add shift-check)
+	      (.add (.yearSpinner shift-model))
+	      (.add (.monthSpinner shift-model))
+	      (.add (.daySpinner shift-model))
+	      (.add (JLabel. "time:"))
+	      (.add (.hourSpinner shift-model))
+	      (.add (.minuteSpinner shift-model))
+	      (.add (.secondSpinner shift-model)))
+	    (.enable shift-model false)
+	    
+	    (.setLayout update-panel (FlowLayout. FlowLayout/TRAILING ))
+	    (.add update-panel (let [update (JButton. "Update")
+				     onUpdate (fn [] 
+						(let [dates-in-order (date-order (.getDate from-model) (.getDate to-model))
+						      from (first dates-in-order)
+						      to (second dates-in-order)]
+						  (let [names (get-names from to server)]
+						    (swap! all-names (fn [_]
+								       (reduce (fn [r e]
 					;e är lista
-									       (reduce (fn [r e]
-											 (conj r e)) r e)
-									       ) #{} (vals names)) 
-								     ))
-						  
-						  (let [panel-and-models (on-update names [add add-new-window])
-							panel (first panel-and-models)
-							content-pane (.getContentPane dialog)]
-						    (.remove content-pane @center-panel)
-						    (reset! center-panel panel)
-						    (reset! combomodels-on-center (second panel-and-models))
-						    (.add content-pane panel BorderLayout/CENTER)
-						    )
-						  (.pack dialog))))]
-		  (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
-		  update))))
-    dialog))
+										 (reduce (fn [r e]
+											   (conj r e)) r e)
+										 ) #{} (vals names)) 
+								       ))
+						    
+						    (let [panel-and-models (on-update names [add add-new-window])
+							  panel (first panel-and-models)
+							  content-pane (.getContentPane dialog)]
+						      (.remove content-pane @center-panel)
+						      (reset! center-panel panel)
+						      (reset! combomodels-on-center (second panel-and-models))
+						      (.add content-pane panel BorderLayout/CENTER)
+						      )
+						    (.pack dialog))))]
+				 (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
+				 update)))
+	dialog)))
 
 
 

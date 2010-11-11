@@ -162,7 +162,9 @@
 					     (for [a (second available) k kombinations-maps]
 						 (when (= k (select-keys a (keys k)))
 						   [(first available) a])))]
-					 (apply conj r filtered))))
+					 (if (seq filtered)
+					   (apply conj r filtered)
+					   r))))
 				   [] days)]
 	   (data-by-i lower upper matching))))
 
