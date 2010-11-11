@@ -140,7 +140,7 @@
 			r
 			(partition 2 e)))
 	      result
-	      (val (first @*last-last-gc-info*)))
+	      (val (last @*last-last-gc-info*)))
       result))))
 
 
