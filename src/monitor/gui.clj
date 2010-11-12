@@ -43,7 +43,8 @@
 
 (def current-server (atom nil))
 (try
- (UIManager/setLookAndFeel (UIManager/getSystemLookAndFeelClassName))
+  (when-not (System/getProperty "java.awt.headless")
+    (UIManager/setLookAndFeel (UIManager/getSystemLookAndFeelClassName)))
 (catch Exception _))
 
 (defn server [] @current-server)

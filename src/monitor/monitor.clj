@@ -21,7 +21,8 @@
 
 (defn in-env 
   ([live-minutes history-days history-directory client-port client-transfer-port]
-     (when (not (System/getProperty "java.awt.headless"))
+     (if  (System/getProperty "java.awt.headless")
+       (shutdown-file ".shutdownmonitor")
        (shutdown-button "Monitor server"))
      (shutdown-jmx "monitor.server")
      

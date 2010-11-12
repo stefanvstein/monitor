@@ -2,6 +2,7 @@
   (:import [javax.swing JFrame JPanel JLabel JButton SwingUtilities JOptionPane WindowConstants])
   (:import [java.awt.event ActionListener WindowAdapter])
   (:import [java.awt Frame])
+  (:import [java.io File])
   (:import [java.lang.management ManagementFactory])
   (:import [javax.management ObjectName])
   (:use [monitor termination]))
@@ -21,7 +22,20 @@
 		  (ObjectName. (str text ":type=Management"))))
   
  
-					
+(defn shutdown-file [name]
+  (doto (Thread. (fn []
+		   (let [file (File. (System/getProperty "user.home") name)]
+		     (while (not (.exists file))
+		       (try
+			 (Thread/sleep 1000)
+			 (catch Exception _)))
+		     (try
+		       (.delete file)
+		       (catch Exception _))
+		     (stop))))
+    (.setDaemon true)
+    (.start )))
+
 (defn shutdown-button [text]
   (let [frame (JFrame. text)
 	label (JLabel. text)
