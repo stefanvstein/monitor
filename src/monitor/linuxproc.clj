@@ -442,7 +442,7 @@
 
 (defn serve-linux-proc [port frequency re]
   (if (System/getProperty "java.awt.headless")
-    (shutdown-file ".shutdownprobe")
+    (shutdown-file ".shutdownlinuxprobe")
     (shutdown-button "Monitor Linux proc Agent"))
   (shutdown-jmx "monitor.linuxproc")
   (when re
