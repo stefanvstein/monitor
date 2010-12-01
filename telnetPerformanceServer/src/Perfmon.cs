@@ -5,7 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Threading;
-using PerformanceTools.Impersonation;
+
 
 namespace PerformanceTools.Perfmons
 {
@@ -20,43 +20,24 @@ namespace PerformanceTools.Perfmons
     internal class LiveCategories : IEnumerable<String>
     {
         private string computerName;
-        private IImpersonator impersonation;
+       
 
         public LiveCategories(String computerName)
         {
             this.computerName = computerName;
-            this.impersonation = new NullImpersonator();
+          
         }
-        public LiveCategories(String computerName, IImpersonator impersonation)
-        {
-            this.computerName = computerName;
-            this.impersonation = impersonation;
-        }
+      
         public IEnumerator<string> GetEnumerator()
         {
-            impersonation.Impersonate();
-            try
-            {
                 foreach (PerformanceCounterCategory category in PerformanceCounterCategory.GetCategories(computerName))
                     yield return category.CategoryName;
-            }
-            finally {
-                impersonation.Dispose();
-            }
         }
 
         IEnumerator IEnumerable.GetEnumerator()
         {
-            impersonation.Impersonate();
-            try
-            {
                 foreach (PerformanceCounterCategory category in PerformanceCounterCategory.GetCategories(computerName))
                     yield return category.CategoryName;
-            }
-            finally
-            {
-                impersonation.Dispose();
-            }
         }
     }
 
@@ -74,62 +55,59 @@ namespace PerformanceTools.Perfmons
 
 
         private String computerName;
-        private IImpersonator impersonation;
-        public Perfmon(String computerName, IImpersonator impersonation)
-        {
-            this.computerName = computerName;
-            this.impersonation = impersonation;
-        }
+
         public Perfmon(String computerName)
         {
             this.computerName = computerName;
-            this.impersonation = new NullImpersonator();
         }
 
         public Perfmon()
         {
             this.computerName = Environment.MachineName;
-            this.impersonation = new NullImpersonator();
         }
 
         public static IEnumerable<String> ListLiveCategoriesOn(String computerName)
         {
             return new LiveCategories(computerName);
         }
-        public static IEnumerable<String> ListLiveCategoriesOn(String computerName, IImpersonator impersonation)
-        {
-            return new LiveCategories(computerName, impersonation);
-        }
+       
         public IEnumerable<String> ListLiveCategories()
         {
-            return new LiveCategories(computerName, impersonation);
+            return new LiveCategories(computerName);
         }
 
         public List<String> Categories()
         {
-            var result = new List<String>();
-            foreach (String name in categories.Keys)
-                result.Add(name);
-            return result;
+            lock (this)
+            {
+                var result = new List<String>();
+                foreach (String name in categories.Keys)
+                    result.Add(name);
+                return result;
+            }
         }
+
         public PerformanceCounterCategory AddCategory(String categoryName, params SampleListener[] listeners)
         {
-            if (categories.Keys.Contains(categoryName))
-                throw new ArgumentException(categoryName + "is already registered");
-            if (!categories.ContainsKey(categoryName))
+            lock (this)
             {
-                PerformanceCounterCategory[] categoriesOnComputer =
-                    PerformanceCounterCategory.GetCategories(computerName);
-                if (categoriesOnComputer != null)
+                if (categories.Keys.Contains(categoryName))
+                    throw new ArgumentException(categoryName + "is already registered");
+                if (!categories.ContainsKey(categoryName))
                 {
-                    foreach (PerformanceCounterCategory category in categoriesOnComputer)
+                    PerformanceCounterCategory[] categoriesOnComputer =
+                        PerformanceCounterCategory.GetCategories(computerName);
+                    if (categoriesOnComputer != null)
                     {
-                        if (category.CategoryName == categoryName)
+                        foreach (PerformanceCounterCategory category in categoriesOnComputer)
                         {
-                            categories.Add(category.CategoryName, category);
+                            if (category.CategoryName == categoryName)
+                            {
+                                categories.Add(category.CategoryName, category);
 
-                            listenersPerCategory.Add(category.CategoryName, listeners);
-                            return category;
+                                listenersPerCategory.Add(category.CategoryName, listeners);
+                                return category;
+                            }
                         }
                     }
                 }
@@ -137,16 +115,25 @@ namespace PerformanceTools.Perfmons
             return null;
         }
 
+        public void RemoveCategory(String categoryName)
+        {
+            lock (this)
+            {
+                categories.Remove(categoryName);
+                listenersPerCategory.Remove(categoryName);
+                previousSamples.Remove(categoryName);
+            }
+        }
+
 
         public String Host()
         {
             return computerName;
         }
+
         public void Poll()
         {
-
-            impersonation.Impersonate();
-            try
+            lock (this)
             {
                 foreach (String categoryName in categories.Keys)
                 {
@@ -212,8 +199,6 @@ namespace PerformanceTools.Perfmons
                     }
                 }
             }
-            finally { impersonation.Dispose(); }
-
         }
     }
     public class PrintingSampleListener : SampleListener

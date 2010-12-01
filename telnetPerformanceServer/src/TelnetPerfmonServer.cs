@@ -8,171 +8,71 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Net;
 using System.Text;
-using IronPython;
-using IronPython.Hosting;
-using Microsoft.Scripting;
-using Microsoft.Scripting.Hosting;
-using PerformanceTools.Impersonation;
+using System.Reflection;
+
 namespace PerformanceTools.TelnetPerfmonServer
 {
-    public class Credentials
-    {
-        private readonly string user;
-        private readonly string domain;
-        private readonly string password;
 
-        public String User
-        {
-            get { return user; }
-            
-        }
-        public String Domain
-        {
-            get{ return domain;}
-        }
-        public String Password
-        {
-            get{ return password;}
-       }
-
-        public Credentials(String user, String domain, String password)
-        {
-            this.user = user; this.domain = domain; this.password = password;
-        }
-    }
-    class Program
+    public class TelnetPerfmonServer
     {
-        private static readonly string HOSTS = "hosts";
-        private static readonly string CREDENTIALS = "credentials";
         static volatile bool isPolling = false;
-        static void Main(string[] args)
+
+        public List<String> Categories() {
+            List<String> categories = (new String[] { "System", "Processor", "Memory", "Process", "Paging File", "PhysicalDisk", "Server", "IP", "UDP", "TCP", "Network Interface", "Cache" }).ToList();
+
+            String configName = Assembly.GetExecutingAssembly().Location;
+            FileInfo fi = new FileInfo(configName);
+            fi = new FileInfo(fi.DirectoryName + "\\categories.txt");
+            if (!fi.Exists)
+                using (var fw = fi.CreateText())
+                {
+                    foreach (String row in categories)
+                        fw.WriteLine(row);
+                }
+            else
+            {
+                using (var fr = fi.OpenText())
+                {
+                    List<String> s = new List<String>();
+                    String line;
+                    while ((line = fr.ReadLine()) != null)
+                        s.Add(line);
+                    categories = s;
+
+                }
+            }
+            return categories;
+        }
+        private TcpListener listener = null;
+        private HashSet<TcpClient> clients = new HashSet<TcpClient>();
+        private ManualResetEvent stop = new ManualResetEvent(false);
+        public void Stop() {
+            
+            stop.Set();
+            foreach (TcpClient c in clients)
+                c.Close();
+        }
+        public void Run(string[] args)
         {
             try
             {
+                int port = 3434;
+                if (args.Length > 0)
+                    port = int.Parse(args[0]);
+                int interval = 15;
+                if (args.Length > 1)
+                    interval = int.Parse(args[1]);
 
-                ScriptEngine engine = Python.CreateEngine();
+                TcpListener listener = new TcpListener(new IPEndPoint(IPAddress.Any, port));
+                listener.Start();
 
-                ScriptScope scope = engine.CreateScope();
-                scope.SetVariable(HOSTS, new Dictionary<String, Regex>());
-                scope.SetVariable(CREDENTIALS, new Dictionary<String, Credentials>());
-                if (args.Count() < 3)
-                {
-                    Console.WriteLine("Supply:");
-                    Console.WriteLine("port interval scriptfile");
-                    Console.WriteLine("as arguments, where:");
-                    Console.WriteLine("port is listener");
-                    Console.WriteLine("interval is polling interval in seconds");
-                    Console.WriteLine("scriptfile is a python file defining the configuration");
-                    return;
-                }
-                int port = int.Parse(args[0]);
-                int interval = int.Parse(args[1]);
+                Perfmon perfmon = new Perfmon();
 
-                try
-                {
-                    engine.CreateScriptSourceFromFile(args[2]).Execute(scope);
-                }
-                catch (SyntaxErrorException e)
-                {
-
-                    Console.WriteLine(e.Message + " at " + e.SourcePath + ":" + e.Line + " \"" + e.SourceCode + "\"");
-                    return;
-                }
-                //Dictionary<String, Regex> confFromScript = scope.GetVariable<Dictionary<String, Regex>>("hosts");
-
-                Dictionary<String, Regex> conf = new Dictionary<string, Regex>();
-                foreach (var entry in scope.GetVariable<Dictionary<String, Regex>>(HOSTS))
-                    try
-                    {
-                        var ip = Dns.GetHostEntry(entry.Key);
-                        if (conf.ContainsKey(ip.HostName))
-                        {
-                            Console.WriteLine("Host " + ip.HostName + " defined more than once");
-                            return;
-                        }
-
-                        conf.Add(ip.HostName, entry.Value);
-                    }
-                    catch (SocketException)
-                    {
-                        Console.WriteLine(entry.Key + " is not recognized as a host");
-                        continue;
-                    }
-                Dictionary<String, Credentials> credentials = new Dictionary<string,Credentials>();
-                foreach (var entry in scope.GetVariable<Dictionary<String, Credentials>>(CREDENTIALS))
-                    try
-                    {
-                        var ip = Dns.GetHostEntry(entry.Key);
-                        if (credentials.ContainsKey(ip.HostName))
-                        {
-                            Console.WriteLine("Credentials for host " + ip.HostName + " defined more than once");
-                            return;
-                        }
-
-                        credentials.Add(ip.HostName, entry.Value);
-                    }
-                    catch (SocketException)
-                    {
-                        Console.WriteLine(entry.Key + " is not recognized as a host");
-                        continue;
-                    }
-                if (conf.Count == 0)
-                {
-                    Console.WriteLine("No hosts to monitor defined");
-                    return;
-                }
                 SharedSampleListeners sharedlisteners = new SharedSampleListeners();
-                Dictionary<String, Perfmon> perfmons = new Dictionary<String, Perfmon>();
 
-                foreach (var host in conf)
-                {
-                    if (credentials.ContainsKey(host.Key))
-                    {
-                        Credentials creds = credentials[host.Key];
-                        perfmons.Add(host.Key, new Perfmon(host.Key, new Impersonation.Impersonator(creds.User, creds.Domain, creds.Password)));
-                    }
-                    else
-                        perfmons.Add(host.Key, new Perfmon(host.Key));
-                }
+                foreach (String n in Categories())
+                    perfmon.AddCategory(n, sharedlisteners);
 
-                List<String> perfmonsToRemove = new List<String>();
-                foreach (var host in conf)
-                {
-                    try
-                    {
-                        foreach (var category in perfmons[host.Key].ListLiveCategories())
-                            if (host.Value.IsMatch(category))
-                            {
-                                perfmons[host.Key].AddCategory(category, sharedlisteners);
-                                Console.WriteLine(host.Key + ": " + category);
-                            }
-                    }
-                    catch (ImpersonationException e) {
-                        Console.WriteLine(e.Message);
-                        perfmonsToRemove.Add(host.Key);
-                    }
-                }
-                
-                foreach (var perfmon in perfmons)
-                {
-                    if (perfmon.Value.Categories().Count == 0)
-                    {
-                        perfmonsToRemove.Add(perfmon.Key);
-                        Console.WriteLine(perfmon.Key + " has no suitable counters to monitor");
-                    }
-                }
-                foreach (var toRemove in perfmonsToRemove)
-                    perfmons.Remove(toRemove);
-
-                if (perfmons.Count == 0)
-                {
-                    Console.WriteLine("Nothing to monitor");
-                    return;
-                }
-
-                Console.WriteLine("Checking every " + interval + " s");
-                Console.WriteLine("Data available on port " + port);
-                Console.WriteLine("... ");
                 Object lockObject = new Object();
                 Timer timer = new Timer((object o) =>
                 {
@@ -183,15 +83,14 @@ namespace PerformanceTools.TelnetPerfmonServer
                             isPolling = true;
                             try
                             {
-                                foreach (Perfmon perfmon in perfmons.Values)
-                                    try
-                                    {
-                                        perfmon.Poll();
-                                    }
-                                    catch (Exception e)
-                                    {
-                                        Console.WriteLine(perfmon.Host() + " could not be polled." + e.Message);
-                                    }
+                                try
+                                {
+                                    perfmon.Poll();
+                                }
+                                catch (Exception e)
+                                {
+                                    Console.WriteLine(perfmon.Host() + " could not be polled." + e.Message);
+                                }
                             }
                             finally { isPolling = false; }
                         }
@@ -205,38 +104,42 @@ namespace PerformanceTools.TelnetPerfmonServer
                 {
 
 
-                    TcpListener listener = new TcpListener(new IPEndPoint(IPAddress.Any, port));
-                    listener.Start();
+                    
                     Console.WriteLine("Listening");
 
-                    while (true)
+                    while (!stop.WaitOne(100))
                     {
-
-                        TcpClient client = listener.AcceptTcpClient();
-                        client.SendTimeout = 5000;
-
-                        NetworkStream stream = client.GetStream();
-                        TextWriter sw = TextWriter.Synchronized(new StreamWriter(stream) { AutoFlush = true });
-                        StreamReader sr = new StreamReader(stream);
-                        try
+                        while (listener.Pending())
                         {
-                            SampleListenerFilter sl = new SampleListenerFilter(new Regex(".*"), new Regex(".*"), new Regex(".*"), new Regex(".*"), new StructSampleListener(sw), false);
+                            TcpClient client = listener.AcceptTcpClient();
+                            clients.Add(client);
 
-                            sharedlisteners.Add(sl);
-                            Thread t = new Thread(new CommandLoop(sw, sr, sl).commandLoop);
-                            t.IsBackground = true;
-                            t.Start();
-                            //Appearently, we dont need to cleanup the handle in .NET!?!?
-                        }
-                        catch (Exception)
-                        {
-                            sw.WriteLine("Sorry... bye bye");
-                            stream.Close();
+                            client.SendTimeout = 5000;
+
+                            try
+                            {
+                                var sw=TextWriter.Synchronized(new StreamWriter(client.GetStream()) { AutoFlush = true });
+                                SampleListenerFilter sl = new SampleListenerFilter(new Regex(".*"), new Regex(".*"), new Regex(".*"), new Regex(".*"), new StructSampleListener(sw), false);
+
+                                sharedlisteners.Add(sl);
+                                Thread t = new Thread(new CommandLoop(client, clients, sw, sl).commandLoop);
+                                t.IsBackground = true;
+                                t.Start();
+                                //Appearently, we dont need to cleanup the handle in .NET!?!?
+                            }
+                            catch (Exception)
+                            {
+                                clients.Remove(client);
+                                client.Close();
+                                
+                            }
                         }
                     }
+                   
                 }
                 finally
                 {
+                    listener.Stop();
                     timer.Dispose();
                 }
 
@@ -250,20 +153,27 @@ namespace PerformanceTools.TelnetPerfmonServer
         }
     }
 
+
     class CommandLoop
     {
         private readonly TextWriter output;
         private readonly TextReader input;
         private readonly SampleListenerFilter filter;
+        private readonly TcpClient client;
+        private readonly HashSet<TcpClient> clients;
         private static Regex hostsPattern = new Regex("^hosts (.*)");
         private static Regex categoriesPattern = new Regex("^categories (.*)");
         private static Regex countersPattern = new Regex("^counters (.*)");
         private static Regex instancesPattern = new Regex("^instances (.*)");
-        public CommandLoop(TextWriter output, TextReader input, SampleListenerFilter filter)
+        public CommandLoop(TcpClient client, HashSet<TcpClient> clients, TextWriter output, SampleListenerFilter filter)
         {
-            this.input = input;
-            this.output = output;
+            this.clients = clients;
+            this.client = client;
+            NetworkStream stream = client.GetStream();
+            this.input = new StreamReader(stream);
+            this.output = output; 
             this.filter = filter;
+            
         }
         public void commandLoop()
         {
@@ -289,6 +199,7 @@ namespace PerformanceTools.TelnetPerfmonServer
                             String pattern = m.Groups[1].Value;
                             Regex r = new Regex(pattern);
                             output.WriteLine("I Categories pattern:" + pattern);
+                          
                             filter.Categories = r;
                             continue;
                         }
@@ -343,6 +254,10 @@ namespace PerformanceTools.TelnetPerfmonServer
                 {
                     output.Close();
                     input.Close();
+                    clients.Remove(client);
+                    client.Close();
+                    
+                    
                 }
                 catch (IOException) { }
                 catch (SocketException) { }
