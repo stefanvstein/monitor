@@ -38,6 +38,7 @@
 			   (clean-live-data-older-than 
 			    (java.util.Date. (- (System/currentTimeMillis) 
 						(* 1000 60 live-minutes)))))))))
+      
       (using-history history-directory
 		     (jmx-db-record-counter "monitor.server")
 		     

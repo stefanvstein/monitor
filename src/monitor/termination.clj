@@ -1,7 +1,8 @@
 (ns monitor.termination
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
-(def ^{:private true} sleep-latch (CountDownLatch. 1))
+;(def ^{:private true} sleep-latch (CountDownLatch. 1))
+(def sleep-latch (CountDownLatch. 1))
 
 (defn terminating? []
   (= 0 (.getCount sleep-latch)))
@@ -22,5 +23,4 @@
 	      (recur (- until (System/currentTimeMillis)))))))))
 
 (defn stop []
-  (.countDown sleep-latch)
-  (shutdown-agents))
+  (.countDown sleep-latch))

@@ -3,7 +3,7 @@
   (:use [clojure.test :only [is deftest]])
   (:use [clojure.stacktrace :only [root-cause]])
   (:use [clojure.contrib.logging :only [info error]])
-  (:import [java.util.concurrent Executors ExecutorCompletionService TimeUnit])
+  (:import [java.util.concurrent CountDownLatch Executors ExecutorCompletionService TimeUnit ScheduledThreadPoolExecutor])
  )
 
 ;(defn info 
@@ -44,12 +44,13 @@
    (when @current-server
      (throw (IllegalStateException. (str (. @current-server getName) " is alreadey serving"))))
    (when-not (terminating?)
-     (swap! current-server (fn [_] (Thread/currentThread)))
+     (swap! current-server (fn [_] (Thread/currentThread)))  ;Do this and the check above in sam trans
      (try 
       (when-not (empty? @running-tasks)
 	(throw (IllegalStateException. "There are tasks marked as running"))) 
       (dosync (ref-set stopped-tasks (hash-set)))
-      (let [restart-agent (agent nil)
+      (let [restart-executor (doto (ScheduledThreadPoolExecutor. 1)
+			        (.setExecuteExistingDelayedTasksAfterShutdownPolicy false))
 	    executor (Executors/newCachedThreadPool 
 		      (proxy [java.util.concurrent.ThreadFactory] []
 			(newThread [runnable]
@@ -62,7 +63,7 @@
 			(dosync (alter running-tasks assoc future task)
 				(alter tasks-to-start disj task))))
 		    @tasks-to-start))
-	(while (not (terminating?)) 
+	(while (not (terminating?))
 	       (try
 		(when-let [stopped (. executor-service poll 1 TimeUnit/SECONDS)] ;throws handled
 		  (try (. stopped get)
@@ -83,16 +84,20 @@
 		     (alter running-tasks dissoc stopped)
 		     (alter stopped-tasks conj task))
 					;guess this could spawn many threads
-		    (let [pause (:restart-pause *serve-options*)]
-		      (send-off restart-agent (fn [_] 
-						(try
-						  (term-sleep pause)
-						  (catch InterruptedException _)) 
-						(dosync (alter tasks-to-start
+		    (let [pause (:restart-pause *serve-options*)
+			  restart-fn (fn []
+				       (dosync (alter tasks-to-start
 							     (fn [tasks]
 							       (when-not (terminating?)
-								 (conj tasks task)))))
-					      )))))
+								 (conj tasks task))))))]
+		      (.schedule restart-executor #^Runnable restart-fn (long pause) TimeUnit/SECONDS)
+;		      (send-off restart-agent (fn [_] 
+;						(try
+;						  (term-sleep pause)
+;						  (catch InterruptedException _)) 
+;						
+;						))
+		      )))
 		
 		(dorun (map (fn [c] 
 			      (let [future (. executor-service submit #^Callable c)]
@@ -107,6 +112,7 @@
 	
 	(info "Shutting down")
 	(. executor shutdown)
+	(. restart-executor shutdown)
 	(try
 	 (. executor awaitTermination 
 	    (:seconds-until-interrupt *serve-options*) 
@@ -123,7 +129,7 @@
 		until (+ (System/currentTimeMillis) 
 			 (* 1000 (:seconds-after-interrupt *serve-options*)))]
 	    (while (not @done)
-		   (try
+	      (try
 		    (. executor awaitTermination 
 		       (- until (System/currentTimeMillis)) TimeUnit/MILLISECONDS) ;throws handled
 		    (swap! done (fn [_] true))
@@ -187,18 +193,21 @@
      (. ex printStackTrace (java.io.PrintWriter. *out* true)))) 
 
 
-
-
 (deftest test-serve
+  (println "Hammarby")
   (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))]  
     (binding [info debug-info
-	      error debug-error]
+	      error debug-error
+	      monitor.termination/sleep-latch (CountDownLatch. 1)]
+      (println "Hu")
       (.start (Thread. #(do (Thread/sleep 4000)
 			    (stop))))
       (let [r (with-out-str (serve [fn1]  :restart-pause 1))]
-	(is (re-find #"(?s)Shutting down\s" r))
+	(is (re-find #"(?s)Shuitting down\s" r))
+	
 	(is (re-matches #"(Hej){2,}" @res)))))
+  (println "Hmm")
   (let [res (atom "")
 	fn1 #(swap! res (fn [v] (. v concat "Hej")))
 	fn2 #(swap! res (fn [v] (. v concat "Hoj")))]  
