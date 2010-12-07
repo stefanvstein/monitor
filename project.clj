@@ -17,7 +17,8 @@
   :manifest {"Class-Path" "."}
   :test-path "src"
   :warn-on-reflection true
-  :jvm-opts [ "-Dstayalive=true" "-mx1024M" "-Dcom.sun.management.jmxremote.port=3333" "-Dcom.sun.management.jmxremote.ssl=false" "-Dcom.sun.management.jmxremote.authenticate=false"]
+					; :jvm-opts [ "-Dstayalive=true" "-Dcom.sun.management.jmxremote.port=3333" "-Dcom.sun.management.jmxremote.ssl=false" "-Dcom.sun.management.jmxremote.authenticate=false"]
+  :jvm-opts [ "-Dstayalive=true"]
   :repositories {"jboss" "http://repository.jboss.com/maven2/"
 		 "oracle" "http://download.oracle.com/maven"
 		 "mavenlocalrepo" "file://mavenlocalrepo"})

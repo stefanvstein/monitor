@@ -1,23 +1,62 @@
 (ns monitor.monitor
-  (:use (monitor database jmxcollection server clientif logger linuxproc shutdown termination countdb))
+  (:use [monitor.database :only [using-live
+				 using-history
+				 clean-live-data-older-than
+				 sync-db
+				 clean-stored-data-older-than
+				 compress-older-than]])
+    (:use [clojure.contrib.logging :only [info]])
+  (:use [monitor.jmxcollection :only [jmx-java6]])
+  (:use [monitor.server :only [tasks-to-start
+			       serve]])
+  (:use [monitor.clientif :only [serve-clients]])
+  (:use [monitor.linuxproc :only [process-remote-linux-proc]])
+  (:use [monitor.shutdown :only [shutdown-file
+				 shutdown-button
+				 shutdown-jmx]])
+  (:use [monitor.termination :only [terminating?
+				    term-sleep]])
+  (:use [monitor.countdb :only [jmx-db-record-counter]])
   (:use [monitor.perfmonservice :only (perfmon-connection)]))
 
 (defn java6-jmx
   ([]
-     (dosync (alter tasks-to-start conj (fn java6-jmx-local [] (jmx-java6 (fn [] (term-sleep 15)))))))
+     (dosync (alter tasks-to-start conj (fn java6-jmx-local []
+					  (jmx-java6 (fn [] (term-sleep 15)))))))
   ([name host port]
-     (dosync (alter tasks-to-start conj (fn java6-jmx-remote [] (jmx-java6 name host port (fn [] (term-sleep 15 ))))))))
+     (dosync (alter tasks-to-start conj (fn java6-jmx-remote []
+					  (jmx-java6 name host port (fn [] (term-sleep 15 ))))))))
 
 (defn perfmon
   ([host port hosts-expression categories-expression counters-expression instances-expression]
-     (dosync (alter tasks-to-start conj (perfmon-connection host port terminating? hosts-expression categories-expression counters-expression instances-expression))))
+     (dosync (alter tasks-to-start conj (perfmon-connection host
+							    port
+							    terminating? '
+							    hosts-expression
+							    categories-expression
+							    counters-expression
+							    instances-expression))))
   ([host port categories-expression counters-expression instances-expression]
-     (dosync (alter tasks-to-start conj (perfmon-connection host port terminating? ".*" categories-expression counters-expression instances-expression))))
+     (dosync (alter tasks-to-start conj (perfmon-connection host
+							    port
+							    terminating?
+							    ".*"
+							    categories-expression
+							    counters-expression
+							    instances-expression))))
   ([host port counters-expression instances-expression]
-     (dosync (alter tasks-to-start conj (perfmon-connection host port terminating? ".*" ".*" counters-expression instances-expression)))))
+     (dosync (alter tasks-to-start conj (perfmon-connection host
+							    port
+							    terminating?
+							    ".*"
+							    ".*"
+							    counters-expression
+							    instances-expression)))))
 
 (defn linux-proc [host port]
-  (dosync (alter tasks-to-start conj #(process-remote-linux-proc host port terminating?))))
+  (dosync (alter tasks-to-start conj #(process-remote-linux-proc host
+								 port
+								 terminating?))))
 
 (defn in-env 
   ([live-minutes history-days history-directory client-port client-transfer-port]
@@ -25,9 +64,6 @@
        (shutdown-file ".shutdownmonitor")
        (shutdown-button "Monitor server"))
      (shutdown-jmx "monitor.server")
-     
-     
-     
      (using-live
       (dosync (alter tasks-to-start conj
 		     (fn live-cleaner []
@@ -65,7 +101,7 @@
 		     
 		     (serve-clients client-transfer-port client-port terminating?
 				    (serve))))
-     (println "Done"))
+     (info "Done"))
   ([live-minutes history-days history-directory client-port]
      (in-env live-minutes history-days history-directory client-port 0))
   ([history-days history-directory client-port]

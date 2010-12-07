@@ -6,7 +6,7 @@
 			JPanel JScrollPane JSplitPane JTable JCheckBox JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
 			DefaultComboBoxModel GroupLayout GroupLayout$Alignment JPopupMenu
-			BorderFactory JSpinner$DateEditor BoxLayout))
+			BorderFactory JSpinner$DateEditor BoxLayout DefaultCellEditor))
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
@@ -92,12 +92,16 @@
 				      color (colors)]
 				  (.setNotify serie false)
 				  (. graph addSeries serie)
-				  
-				  (.. chart 
-				      (getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries graph)))
-									      color))
-				  
-				  (add-to-table data-key color identifier)
+				  (let [index (dec (count (.getSeries graph)))
+					visible-fn (fn ([]
+							  (.. chart (getPlot) (getRenderer) (getItemVisible index 0 )))
+						     ([visible]
+							(.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))))]
+				    (.. chart 
+					(getPlot) (getRenderer) (setSeriesPaint index
+										color))
+				    
+				    (add-to-table data-key color identifier visible-fn))
 				  (dorun (map (fn [i] (add-column i)) (keys data-key))) 
 				  serie))
 	updatechart (fn [data] (SwingUtilities/invokeLater 
@@ -190,7 +194,7 @@
 					       server))))
 		      
 		      names-of-interest))))
-
+	     
 	       (.setText statusbar " ")
 	       
       (catch Exception e
@@ -312,7 +316,9 @@
 					    (:add-to-table contents)
 					    (:add-column contents)
 					    (:status-label contents)
-					    server)))))
+					    server)
+;			(future (Thread/sleep 5000) (SwingUtilities/invokeLater (fn [] (.fireTableDataChanged (:model (:table-model contents))))))
+			))))
 		
 	add (let [add (JButton. "Add")]
 	      (.setEnabled add false)
@@ -486,7 +492,7 @@
 					     )))
 	]
 
-
+   
     (.setDateFormatOverride (.getDomainAxis (.getPlot chart)) (SimpleDateFormat. "yy-MM-dd HH:mm:ss"))
    ;(let [right-axis (NumberAxis.)
 ;	  plot (.getPlot chart)]
@@ -519,6 +525,12 @@
 							     (.setOpaque true)
 							     (.setBackground color)
 							     ))))
+							 ;(.setDefaultRenderer Boolean
+							;		      (proxy [TableCellRenderer] []
+							;			(getTableCellRendererComponent [table value selected focus row column]
+							;						       (doto (JCheckBox.)
+					;							 (.setSelected (boolean value))))))
+							 
 						       (.setModel (:model tbl-model))
 						       (.setCellSelectionEnabled false)
 						       (.setName "table")
@@ -543,9 +555,12 @@
 										(.fireChartChanged (.getChart c))
 										))
 									     ))))))) BorderLayout/CENTER))
-				 
+    (let [show-column (.getColumn (.getColumnModel table) 1)]
+      (.setCellEditor show-column (DefaultCellEditor. (JCheckBox.))))
+    
  ;(ChartUtilities/applyCurrentTheme chart)				  
     {:panel panel
+     :table-model tbl-model
      :status-label status-label
      :add-to-table (:add-row tbl-model)
      :add-column (:add-column tbl-model)

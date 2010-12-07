@@ -104,7 +104,7 @@
 (defn create-table-model [remove-graph-fn recolor-graph-fn] 
   "rows and columns is expected to be atom []. Column 0 is expected to be a color"
   (let [rows (atom [])
-	columns (atom [:color])
+	columns (atom [:color :shown])
 	model (proxy [AbstractTableModel] []
 		(getRowCount [] (count @rows))
 		(getColumnCount [] (count @columns))
@@ -113,10 +113,25 @@
 			    (let [the-keyword (nth @columns column)]
 			      (if (= 0 column) 
 				(:color (get @rows row))
-				(the-keyword (:data (get @rows row))))))
-		(getColumnClass [column] (if (= 0 column) Color Object)))
-	add-row (fn [data color name] 
-		  (let [internal-data {:data data :color color :name name}] 
+				(if (= 1 column)
+				  (let [r  ((:visible (get @rows row)))]
+				    r)
+				  (the-keyword (:data (get @rows row)))))))
+		(getColumnClass [column] (if (= 0 column)
+					   Color
+					   (if (= 1 column)
+					     Boolean
+					     Object)))
+		(isCellEditable [row column] (= column 1))
+		(setValueAt [value row column]
+			    ((:visible (get @rows row)) value)))
+	add-row (fn [data color name visible-fn] 
+		  (let [fake-visible-flag (atom true)
+			fake-visible-fn (fn ([]  @fake-visible-flag)
+					  ([value]  (reset! fake-visible-flag value)))
+			internal-data {:data data :color color :name name :visible (if visible-fn
+										     visible-fn
+										     fake-visible-fn)}] 
 		    (when-not (some #(= (:name internal-data) (:name %)) @rows)
 		      (swap! rows (fn [rows] (conj rows internal-data)))
 		      (.fireTableDataChanged model))))
@@ -134,7 +149,8 @@
 				       (apply conj begining end)))))
 		     (.fireTableDataChanged model)
 		     (dotimes [row-number (count @rows)]
-		       (recolor-graph-fn row-number (:color (get @rows row-number)))))] 
+		       (recolor-graph-fn row-number (:color (get @rows row-number)))))]
+   
 	(assoc {} 
 	  :model model 
 	  :rows rows 
