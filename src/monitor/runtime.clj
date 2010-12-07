@@ -209,7 +209,7 @@
 
 				    
 				      ) 
-			     row (do ((:add-to-table contents) %1 color %2)
+			     row (do ((:add-to-table contents) %1 color %2 nil)
 				     (- (.getRowCount table-model) 1))]
 			 (.setColor trace color)
 			 (.addTrace (:chart contents) trace)
