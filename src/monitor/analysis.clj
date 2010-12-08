@@ -76,7 +76,16 @@
 	  (sorted-map) (.getItems timeserie))
 )
 
-			
+(defn- index-by-name [time-series-collection name]
+  (let [n (.getSeriesCount time-series-collection)]
+    (loop [i 0]
+      (if (< i n)
+	(if (= name (.getSeriesKey time-series-collection i))
+	  i
+      	  (recur (inc i)))
+	nil))))
+  
+
 (defn on-add-to-analysis [from to shift name-values all-names func-string graph colors chart add-to-table add-column statusbar server]
   (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
 			    (dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries))))
@@ -92,13 +101,17 @@
 				      color (colors)]
 				  (.setNotify serie false)
 				  (. graph addSeries serie)
-				  (let [index (dec (count (.getSeries graph)))
-					visible-fn (fn ([]
-							  (.. chart (getPlot) (getRenderer) (getItemVisible index 0 )))
-						     ([visible]
-							(.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))))]
+				  (let [visible-fn (fn ([_]
+							  
+							  (if-let [index (index-by-name graph identifier)]
+							    (.. chart (getPlot) (getRenderer) (getItemVisible index 0 ))
+							    false))
+						     ([_ visible]
+							(when-let [index (index-by-name graph identifier)]
+							  (.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))
+							  )))]
 				    (.. chart 
-					(getPlot) (getRenderer) (setSeriesPaint index
+					(getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries graph)))
 										color))
 				    
 				    (add-to-table data-key color identifier visible-fn))

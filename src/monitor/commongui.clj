@@ -114,7 +114,7 @@
 			      (if (= 0 column) 
 				(:color (get @rows row))
 				(if (= 1 column)
-				  (let [r  ((:visible (get @rows row)))]
+				  (let [r  ((:visible (get @rows row)) (:name (get @rows row)))]
 				    r)
 				  (the-keyword (:data (get @rows row)))))))
 		(getColumnClass [column] (if (= 0 column)
@@ -124,11 +124,11 @@
 					     Object)))
 		(isCellEditable [row column] (= column 1))
 		(setValueAt [value row column]
-			    ((:visible (get @rows row)) value)))
+			    ((:visible (get @rows row)) (:name (get @rows row)) value)))
 	add-row (fn [data color name visible-fn] 
 		  (let [fake-visible-flag (atom true)
-			fake-visible-fn (fn ([]  @fake-visible-flag)
-					  ([value]  (reset! fake-visible-flag value)))
+			fake-visible-fn (fn ([name]  @fake-visible-flag)
+					  ([name value]  (reset! fake-visible-flag value)))
 			internal-data {:data data :color color :name name :visible (if visible-fn
 										     visible-fn
 										     fake-visible-fn)}] 
