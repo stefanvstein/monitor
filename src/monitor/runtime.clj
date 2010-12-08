@@ -204,12 +204,10 @@
 	columns-to-be-added (difference columns-in-watched current-columns)
 	add-columns #(dorun (map (fn [c] ((:add-column contents) c)) %))
 	new-trace-row #(let [color ((:colors contents))
-			     trace  (doto (Trace2DLtdReplacing. 1000)
-				    
-
-				    
-				      ) 
-			     row (do ((:add-to-table contents) %1 color %2 nil)
+			     trace  (doto (Trace2DLtdReplacing. 1000))
+			     visible-fn (fn ([_] (.isVisible trace))
+					  ([_ visible] (.setVisible trace visible)))
+			     row (do ((:add-to-table contents) %1 color %2 visible-fn)
 				     (- (.getRowCount table-model) 1))]
 			 (.setColor trace color)
 			 (.addTrace (:chart contents) trace)
