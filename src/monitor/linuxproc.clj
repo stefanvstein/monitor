@@ -21,7 +21,7 @@
 	      (try
 		(with-open [cmdline (BufferedReader. (FileReader. (File. file "cmdline")))]
 		  (if-let [line (.readLine cmdline)]
-		    (re-matches re line)
+		    (re-find re line)
 		    nil))
 		(catch IOException _
 		  false)))
@@ -471,7 +471,11 @@
 
     (loop [tim (Date.)]
       (when re
-	(reset! pids-of-interest (interesting-pids re)))
+	(reset! pids-of-interest (interesting-pids re))
+	;(doseq [i @pids-of-interest]
+	 ; (println (slurp (str (.getAbsolutePath i) "/cmdline"))))
+	)
+      
       (let [text (to-text net-dev disk cpu)]
 	(dorun (map (fn [s]
 		      (try
