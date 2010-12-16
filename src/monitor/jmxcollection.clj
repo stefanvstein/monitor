@@ -1,5 +1,6 @@
 (ns monitor.jmxcollection
-  (:use (monitor database jmx) )
+					;  (:use (monitor database jmx) )
+   (:use (monitor jmx) )
   (:use (clojure.contrib repl-utils))
   (:import (java.util.concurrent TimeUnit)
 	   (javax.management JMX ObjectName MBeanServer MBeanServerConnection Attribute)  
@@ -11,6 +12,7 @@
   (:use (clojure stacktrace inspector)))
 
 (def *last-last-gc-info* (atom (sorted-map)))
+(def *add* (fn [& _]))
 
 (defn- object-names [#^MBeanServerConnection server]
   (. server queryNames nil nil))
@@ -228,6 +230,34 @@
 		      result (val a-fn)))) 
 	  {} mem-fns))
 
+(defn- add-memory-usage
+  [pid the-time]
+  (let [memoryusage (remote-memory)]
+		 (*add* {:host (remote-hostname)
+			    :jvm (vmname)
+			    :pid pid
+			    :category "Memory"
+			    :counter "Heap used"}
+			   the-time (.getUsed (:heap memoryusage)))
+		 (*add* {:host (remote-hostname)
+			    :jvm (vmname)
+			    :pid pid
+			    :category "Memory"
+			    :counter "Heap committed"}
+			   the-time (.getCommitted (:heap memoryusage)))
+		 (*add* {:host (remote-hostname)
+			    :jvm (vmname)
+			    :pid pid
+			    :category "Memory"
+			    :counter "Non-Heap committed"}
+			   the-time (.getCommitted (:non-heap memoryusage)))
+		 (*add* {:host (remote-hostname)
+			    :jvm (vmname)
+			    :pid pid
+			    :category "Memory"
+			    :counter "Non-Heap used"}
+			   the-time (.getUsed (:non-heap memoryusage)))))
+
 (defn- jmx-java6-impl
   ([stop-fn threads?]
   (let [collector-fns (collector-keys (mbean-server))
@@ -238,17 +268,26 @@
 	   (let [the-time (remote-time)]
 
 	     (dorun (map (fn [i]  
-			   (add-data (assoc (key i) :pid pid) the-time (val i))) 
+			   (*add* (assoc (key i) :pid pid) the-time (val i))) 
 			 (collector-values collector-fns (mbean-server))))
 	     (dorun (map (fn [i]  
-			   (add-data (assoc (key i) :pid pid) the-time (val i))) 
+			   (*add* (assoc (key i) :pid pid) the-time (val i))) 
 			 (memory-values mem-fns (mbean-server))))
 
 	       (dorun (map (fn [i]  
-			     (add-data (assoc (key i) :pid pid) the-time (val i) threads?)) 
+			     (*add* (assoc (key i) :pid pid) the-time (val i) threads?)) 
 			   (thread-info thread-beans)))
 
-	     (add-data 
+	       (*add* {:host (remote-hostname)
+			    :jvm (vmname)
+			    :pid pid
+			   :category "Thread"
+			   :counter "Number fo Threads"}
+			 the-time (remote-threads))
+	       
+	       (add-memory-usage pid the-time)
+	       
+	     (*add* 
 	      {:host (remote-hostname) 
 	       :jvm (vmname)
 	       :pid pid
@@ -263,8 +302,9 @@
    (using-named-jmx host port name (jmx-java6-impl stop-fn false)))
  ([stop-fn] 
     (jmx-java6-impl stop-fn false)))
- 
-(deftest test-java6
+
+
+#_(deftest test-java6
  (using-live
   (let [fun (fn [] (let [countdown (atom 2)]
 		     (jmx-java6 (fn [] (swap! countdown dec)

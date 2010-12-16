@@ -1,5 +1,5 @@
 (ns monitor.bootup
-  (:use (monitor logger linuxproc gui)))
+  (:use (monitor logger linuxproc gui jmxremote)))
 
 (defn boot [line]
   (using-logger
@@ -18,5 +18,8 @@
 							     (re-pattern pat)
 							     nil))
 	     
-	     (println "You need to supply a listener port"))))
+	     (println "You need to supply a listener port")))
+	 (when (= "jmx" (first line))
+	   (jmx-probe (rest line))))
+	   
      (new-window true))))

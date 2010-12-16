@@ -17,15 +17,18 @@
   (:use [monitor.termination :only [terminating?
 				    term-sleep]])
   (:use [monitor.countdb :only [jmx-db-record-counter]])
-  (:use [monitor.perfmonservice :only (perfmon-connection)]))
+  (:use [monitor.perfmonservice :only (perfmon-connection)])
+  (:use [monitor.jmxremote :only [jmx-remote]]))
 
 (defn java6-jmx
   ([]
      (dosync (alter tasks-to-start conj (fn java6-jmx-local []
-					  (jmx-java6 (fn [] (term-sleep 15)))))))
+					  (binding [monitor.jmxcollection/*add* monitor.database/add-data]
+					    (jmx-java6 (fn [] (term-sleep 15))))))))
   ([name host port]
      (dosync (alter tasks-to-start conj (fn java6-jmx-remote []
-					  (jmx-java6 name host port (fn [] (term-sleep 15 ))))))))
+					  (binding [monitor.jmxcollection/*add* monitor.database/add-data]
+					    (jmx-java6 name host port (fn [] (term-sleep 15 )))))))))
 
 (defn perfmon
   ([host port hosts-expression categories-expression counters-expression instances-expression]
@@ -57,6 +60,8 @@
   (dosync (alter tasks-to-start conj #(process-remote-linux-proc host
 								 port
 								 terminating?))))
+(defn remote-jmx [host port]
+  (dosync (alter tasks-to-start conj #(jmx-remote host port terminating?))))
 
 (defn in-env 
   ([live-minutes history-days history-directory client-port client-transfer-port]

@@ -2,6 +2,7 @@
   (:use cupboard.bdb.je)
   (:use cupboard.utils)
   (:use [clojure stacktrace test])
+  (:use monitor.tools)
   (:import java.text.SimpleDateFormat)
   (:import java.util.Date)
   (:import [java.nio ByteBuffer])
@@ -185,10 +186,7 @@
 
     
 
-(defn- causes [e] 
-  (take-while #(not (nil? %)) 
-	      (iterate (fn [#^Throwable i] (when i (. i getCause))) 
-		       e)))
+
 
 
 

@@ -34,12 +34,12 @@
   "Adding data to the store, live if bound, and history if bound. Name is expected to be a map of keyword and string value, possibly used as indices of the data. Time-stamp is expected to be a Date object."
   ([name time-stamp value save?]
      {:pre [(instance? java.util.Date time-stamp)]}
-  (when @*live-data* 
-    (dosync (alter *live-data* add name time-stamp value)))
-  (when save?
-    (when @*db-env*
-;      (println "<-" name time-stamp value)
-      (add-to-db value time-stamp name))))
+     (when @*live-data* 
+       (dosync (alter *live-data* add name time-stamp value)))
+     (when save?
+       (when @*db-env*
+					;      (println "<-" name time-stamp value)
+	 (add-to-db value time-stamp name))))
   ([name time-stamp value]
      (add-data name time-stamp value true)))
 

@@ -2,6 +2,16 @@
   (:import (java.util Date Calendar))
   (:use clojure.test))
 
+
+(defn causes ([e] 
+  (take-while #(not (nil? %)) 
+	      (iterate (fn [#^Throwable i] (when i (. i getCause))) 
+		       e)))
+  ([e exception-class]
+     (some #(when (instance? exception-class %)
+	      %)
+	   (causes e))))
+
 (defn day-by-day
   [date]
   (let [start (doto (. Calendar getInstance ) (.setTime date))

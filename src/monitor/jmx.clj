@@ -1,7 +1,7 @@
 (ns monitor.jmx
   (:import (javax.management.remote JMXConnectorFactory JMXServiceURL) 
 	   (javax.management JMX ObjectName MBeanServerFactory) 
-	   (java.lang.management ManagementFactory RuntimeMXBean)
+	   (java.lang.management ManagementFactory RuntimeMXBean MemoryMXBean ThreadMXBean)
 	   (java.util Date)
 	   (java.net InetAddress UnknownHostException)
 	   (java.util.concurrent TimeUnit)
@@ -15,11 +15,14 @@
 
 
 (def *current-mbean-connection* (let [server (ManagementFactory/getPlatformMBeanServer)
-				      runtime (ManagementFactory/getRuntimeMXBean) ]
+				      runtime (ManagementFactory/getRuntimeMXBean)
+				      memory (ManagementFactory/getMemoryMXBean)]
 				  (assoc {} 
 				    :server server 
 				    :host (. (. InetAddress getLocalHost) getCanonicalHostName)
 				    :runtime runtime
+				    :threads (ManagementFactory/getThreadMXBean)
+				    :memory memory
 				    :vmname "Monitor")));(.getName runtime))))
 
 (def mbean-connections (atom #{*current-mbean-connection*}))
@@ -33,6 +36,8 @@
 	   result (assoc mbean-connector
 		    :runtime  (. JMX newMXBeanProxy server 
 				 (ObjectName. "java.lang:type=Runtime") RuntimeMXBean)
+		    :memory (. JMX newMXBeanProxy server (ObjectName. "java.lang:type=Memory") MemoryMXBean)
+		    :threads (. JMX newMXBeanProxy server (ObjectName. "java.lang:type=Threading") ThreadMXBean)
 		    :server server)]
        (swap! mbean-connections (fn [current] (conj current result)))
        result)
@@ -124,6 +129,20 @@
 ([]
    (remote-time *current-mbean-connection*)))
   
+(defn remote-memory
+  ([]
+     (remote-memory *current-mbean-connection*))
+  ([con]
+     (when-let [#^MemoryMXBean memory (:memory con)]
+       {:heap (.getHeapMemoryUsage memory)
+	:non-heap (.getNonHeapMemoryUsage memory)})))
+
+(defn remote-threads
+  ([]
+     (remote-threads *current-mbean-connection*))
+  ([connection]
+     (when-let [#^ThreadMXBean threads (:threads connection)]
+       (.getThreadCount threads))))
 
 (defn remote-uptime
   ([]

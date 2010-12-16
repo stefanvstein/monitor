@@ -73,15 +73,15 @@
 				  (let [lv (get @last-values (key e))
 					cv (val e)]
 				    (assoc r (key e)
-					   {"Received bytes" (calculate (:received-bytes lv) (:received-bytes cv) seconds)
-					    "Received packets" (calculate (:received-packets lv) (:received-packets cv) seconds)
-					    "Receive errors" (calculate (:receive-errors lv) (:receive-errors cv) seconds)
-					    "Receive drops" (calculate (:receive-drops lv) (:receive-drops cv) seconds)
-					    "Sent bytes" (calculate (:sent-bytes lv) (:sent-bytes cv) seconds)
-					    "Sent packets" (calculate (:sent-packets lv) (:sent-packets cv) seconds)
-					    "Send errors" (calculate (:send-errors lv) (:send-errors cv) seconds)
-					    "Send drops" (calculate (:send-drops lv) (:send-drops cv) seconds)
-					    "Send collisions" (calculate (:send-collisions lv) (:send-collisions cv) seconds)}
+					   {"Received bytes/s" (calculate (:received-bytes lv) (:received-bytes cv) seconds)
+					    "Received packets/s" (calculate (:received-packets lv) (:received-packets cv) seconds)
+					    "Receive errors/s" (calculate (:receive-errors lv) (:receive-errors cv) seconds)
+					    "Receive drops/s" (calculate (:receive-drops lv) (:receive-drops cv) seconds)
+					    "Sent bytes/s" (calculate (:sent-bytes lv) (:sent-bytes cv) seconds)
+					    "Sent packets/s" (calculate (:sent-packets lv) (:sent-packets cv) seconds)
+					    "Send errors/s" (calculate (:send-errors lv) (:send-errors cv) seconds)
+					    "Send drops/s" (calculate (:send-drops lv) (:send-drops cv) seconds)
+					    "Send collisions/s" (calculate (:send-collisions lv) (:send-collisions cv) seconds)}
 					   ))   
 				  ) {} values)
 			
