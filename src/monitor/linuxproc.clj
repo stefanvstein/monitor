@@ -3,7 +3,7 @@
   (:import (java.util Date))
   (:import (java.util.concurrent Executors))
   (:import (java.util.concurrent.locks ReentrantLock))
-  (:import (java.net SocketTimeoutException ServerSocket))
+  (:import (java.net SocketTimeoutException ServerSocket Socket SocketAddress))
   (:use (clojure pprint test))
   (:use (monitor database termination shutdown))
   (:use [clojure.contrib.logging :only [info]]))
@@ -13,11 +13,11 @@
   [re]
   (let [pids-in-proc
 	(seq (.listFiles (File. "/proc") (proxy [FileFilter] []
-					   (accept [file]
+					   (accept [^File file]
 						   (boolean (and
 							     (.isDirectory file)
 							     (re-matches #"^\d+$" (.getName file))))))))]
-    (filter (fn [file]
+    (filter (fn [^File file]
 	      (try
 		(with-open [cmdline (BufferedReader. (FileReader. (File. file "cmdline")))]
 		  (if-let [line (.readLine cmdline)]
@@ -169,7 +169,7 @@
 	    timestamp (System/currentTimeMillis)
 	    pids-dirs @pids-of-interest]
 	(try
-	  (let [new-values (merge (reduce (fn [r line]
+	  (let [new-values (merge (reduce (fn [r ^String line]
 					    (cond
 					     (.startsWith line "ctxt") (assoc r :context-switches (Long/parseLong (.trim (.substring line 5))))
 					     
@@ -195,12 +195,12 @@
 										      :iowait iowait
 										      :irq irq
 										      :softirq softirq}))))
-					  {} (filter #(or
-						       (.startsWith % "cpu")
-						       (.startsWith % "ctxt")
-						       (.startsWith % "intr"))
+					  {} (filter (fn [^String x] (or
+						       (.startsWith x "cpu")
+						       (.startsWith x "ctxt")
+						       (.startsWith x "intr")))
 						     (line-seq stream)))
-				  (reduce (fn [r pid-dir]
+				  (reduce (fn [r ^File pid-dir]
 					    (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "stat")))]
 					      (if-let [line (.readLine stat)]
 						(let [s (seq (.split line "\\s"))
@@ -330,11 +330,11 @@
 	    
 	    (let [processes (assoc {}
 			      "process"
-			      (reduce (fn [r pid-dir]
+			      (reduce (fn [r ^File pid-dir]
 					(try
 					  (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "smaps")))]
 					    (let [data (loop [size 0 shared 0 private 0 resident 0 swapped 0 lines (line-seq stat)]
-							 (if-let [line (first lines)]
+							 (if-let [line ^String (first lines)]
 							 (cond
 							  (.startsWith line "Pss:")
 							  (recur (+ size (Long/parseLong (second (.split #"\s+" line)))) shared private resident swapped (next lines))
@@ -396,7 +396,7 @@
   (paths (read (PushbackReader. (java.io.StringReader. text)))))
 
 (defn process-remote-linux-proc
-  ([socket stop]
+  ([^Socket socket stop]
      (try
        (let [input (PushbackReader. (InputStreamReader. (.getInputStream socket)))
 	     data (repeatedly #(if (stop)
@@ -416,11 +416,11 @@
 		     data)))
        (catch Exception e
 	 (if (.contains (.getMessage e) "EOF" )
-	   (info (str "Lost contact with linux proc process at " (.getHostName (.getRemoteSocketAddress socket))))
+	   (info (str "Lost contact with linux proc process at " (.getHostName (.getRemoteSocketAddress  socket))))
 	   (if (.contains (.getMessage e) "Stopped")
 	     (info "Fetching info from remote linux proc stopped")  
 	     (throw e))))))
-  ([host port stop]
+  ([^String host ^Integer port stop]
      (try 
        (process-remote-linux-proc (java.net.Socket. host port) stop)
        (catch java.net.ConnectException e
@@ -440,7 +440,7 @@
 	    
 
 
-(defn serve-linux-proc [port frequency re]
+(defn serve-linux-proc [port frequency ^java.util.regex.Pattern re]
   (if (System/getProperty "java.awt.headless")
     (shutdown-file ".shutdownlinuxprobe")
     (shutdown-button "Monitor Linux proc Agent"))
@@ -454,7 +454,7 @@
 	sockets (atom #{})
 	accept-executor (Executors/newSingleThreadExecutor
 			   (proxy [java.util.concurrent.ThreadFactory] []
-			     (newThread [runnable] (doto (Thread. runnable)
+			     (newThread [^Runnable runnable] (doto (Thread. runnable)
 						     (.setDaemon true)))))
 	]
     (. accept-executor execute (fn acceptor []
@@ -477,7 +477,7 @@
 	)
       
       (let [text (to-text net-dev disk cpu)]
-	(dorun (map (fn [s]
+	(dorun (map (fn [^Socket s]
 		      (try
 			(binding [*out* (OutputStreamWriter. (.getOutputStream s))]
 			  (println text)
@@ -491,6 +491,6 @@
       (term-sleep-until tim)
 
       (when-not (.isTerminated accept-executor)
-	(recur (Date. (+ (.getTime tim) (* 1000 frequency))))))))
+	(recur (Date. ^Long (+ (.getTime tim) (* 1000 frequency))))))))
     
 			    
