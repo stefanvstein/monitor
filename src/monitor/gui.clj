@@ -53,12 +53,13 @@
 (def lastPort (atom ""))
 
 (defn connect-dialog [ parent]
-  (let [dialog (JDialog. parent "Connection" false)
-	ok (JButton. "Ok")
-	cancel (JButton. "Cancel")
+  (let [dialog (doto (JDialog. parent "Connection" false)
+		 (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
+		 (.setResizable false))
+	
 	host (JTextField. @lastHost)
 	port (JTextField. @lastPort)
-	onOk #(let [host (.getText host)
+	on-ok #(let [host (.getText host)
 		    port (.getText port)]
 		   (try
 		    (let [port (Integer/parseInt port)]
@@ -88,15 +89,17 @@
 			(do (JOptionPane/showMessageDialog 
 			 dialog (.getMessage cause) "Error" JOptionPane/ERROR_MESSAGE)
 			    (println cause)))))))
-	onCancel #(.dispose dialog)
-	hostLabel (JLabel. "Host")
-	portLabel (JLabel. "Port")]
-    (doto dialog
-      (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
-      (.setResizable false))
-    (doto ok 
-      (.addActionListener (proxy [ActionListener] [] (actionPerformed [event]  (onOk)))))
-    (doto cancel (.addActionListener (proxy [ActionListener] [] (actionPerformed [event] (onCancel)))))
+	on-cancel #(.dispose dialog)
+	ok (doto (JButton. "Ok")
+	     (.addActionListener (proxy [ActionListener] [] (actionPerformed [event]  (on-ok)))))
+	cancel (doto (JButton. "Cancel")
+		 (.addActionListener (proxy [ActionListener] [] (actionPerformed [event] (on-cancel)))))
+	host-label (JLabel. "Host")
+	port-label (JLabel. "Port")]
+
+
+      
+
     
     (let [contentPane (.getContentPane dialog)]
       (let [panel (JPanel.)]      
@@ -109,18 +112,18 @@
 	  (. layout setHorizontalGroup 
 	     (doto (. layout createSequentialGroup)
 	       (.addGroup (doto (. layout createParallelGroup (GroupLayout$Alignment/TRAILING))
-			    (.addComponent hostLabel)
-			    (.addComponent portLabel)))
+			    (.addComponent host-label)
+			    (.addComponent port-label)))
 	       (.addGroup (doto (. layout createParallelGroup)
 			    (.addComponent host 200 GroupLayout/DEFAULT_SIZE 200)
 			    (.addComponent port 10 GroupLayout/DEFAULT_SIZE 50)))))
 	  (. layout setVerticalGroup 
 	     (doto (. layout createSequentialGroup)
 	       (.addGroup (doto (. layout createParallelGroup (GroupLayout$Alignment/BASELINE))
-			    (.addComponent hostLabel)
+			    (.addComponent host-label)
 			    (.addComponent host)))
 	       (.addGroup (doto (. layout createParallelGroup (GroupLayout$Alignment/BASELINE))
-			    (.addComponent portLabel)
+			    (.addComponent port-label)
 			    (.addComponent port )))))))
       (let [buttonPanel (JPanel.)]
 	(. contentPane add buttonPanel BorderLayout/SOUTH)

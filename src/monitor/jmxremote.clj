@@ -58,8 +58,8 @@
 	(throw (IOException. (str "Lost contact with remote jmx at " host ":" port) e)))
       (throw e))))
   (catch Exception e
-    (info (str "Can't establish remote jmx connection to " host ":" port  ))
-    (.printStackTrace e))))
+    (info (str "Can't establish remote jmx connection to " host ":" (str port ". ") (.getMessage e )))
+    )))
 
 (defn config-from-text [s]
   (let [input (.replaceAll s "(?m);.*" "")
