@@ -6,7 +6,7 @@
 		 [jfree/jfreechart "1.0.13"]
 		 [jfree/jcommon "1.0.16"]
 		 [my/jchart2d "3.1.0"]]
-  :min-lein-version "1.4.1"
+  :min-lein-version "1.4.1" 
 ;  :dev-dependencies [[swank-clojure "1.2.1"]
 ;		     [lein-javac "1.2.1-SNAPSHOT"]]
 :dev-dependencies [[swank-clojure "1.2.1"]]
