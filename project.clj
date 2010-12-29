@@ -6,12 +6,13 @@
 		 [jfree/jfreechart "1.0.13"]
 		 [jfree/jcommon "1.0.16"]
 		 [my/jchart2d "3.1.0"]]
-  :min-lein-version "1.3.0"
-  :dev-dependencies [[swank-clojure "1.2.1"]
-		     [lein-javac "1.2.1-SNAPSHOT"]]
-  :java-options {:debug "true"}
-  :java-source-path [["src"]]
-  :hooks [leiningen.hooks.javac]
+  :min-lein-version "1.4.1"
+;  :dev-dependencies [[swank-clojure "1.2.1"]
+;		     [lein-javac "1.2.1-SNAPSHOT"]]
+:dev-dependencies [[swank-clojure "1.2.1"]]
+  :javac-options {:debug "true"}
+  :java-source-path "src"
+;  :hooks [leiningen.hooks.javac]
   :aot [monitor.main]
   :main monitor.main
   :manifest {"Class-Path" "."}
@@ -21,4 +22,5 @@
   :jvm-opts [ "-Dstayalive=true"]
   :repositories {"jboss" "http://repository.jboss.com/maven2/"
 		 "oracle" "http://download.oracle.com/maven"
-		 "mavenlocalrepo" "file://mavenlocalrepo"})
+		 "mavenlocalrepo" "file://mavenlocalrepo"}
+)
