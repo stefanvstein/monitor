@@ -72,7 +72,6 @@
 
 (defn get-data 
   ([from to names func-string server]
-     (try
        (let [stringed-names (interleave 
 			    (map #(name (first %)) (partition 2 names)) 
 			    (map #(second %) (partition 2 names)))
@@ -81,10 +80,7 @@
 		   (assoc result
 		     (names-as-keyworded (key a-data))
 		     (transform (val a-data) func-string))) 
-		{} data))
-       (catch Exception e
-	 (.printStackTrace e)
-	 {})))
+		{} data)))
   ([names func-string  server]
      (try
        (let [stringed-names-in-hashmaps (reduce 
@@ -99,7 +95,7 @@
 	(reduce (fn [result a-data] 
 		  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (transform (val a-data) func-string)))) 
 		{} data))
-     (catch Exception e (println e) {}))))
+     (catch Exception e  (throw e)))))
 
 (defn create-table-model [remove-graph-fn recolor-graph-fn] 
   "rows and columns is expected to be atom []. Column 0 is expected to be a color"

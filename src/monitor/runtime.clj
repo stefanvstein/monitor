@@ -18,6 +18,7 @@
   (:import (info.monitorenter.gui.chart.traces.painters TracePainterLine TracePainterDisc))
 )
 (def types ["Raw" "Average" "Mean" "Change/Second" "Change/Minute"])
+
 (defn- with-type-added [type data]
   (if (map? data)
    (reduce (fn [r e]
@@ -56,6 +57,7 @@
 
 (defn new-runtime-panel [frame]
   (let [panel (JPanel.)
+	connection-label (JLabel. " ")
 	chart (Chart2D.)
 	name-trace-row (atom {})
 	watched-names (atom #{})
@@ -127,10 +129,12 @@
       (.setRangePolicy (RangePolicyHighestValues. (* 58 60 1000)))
       (.setPaintScale true)
       (.setPaintGrid true))  
+
     
       
     (doto panel
       (.setLayout (BorderLayout.))
+      (.add connection-label BorderLayout/SOUTH)
       (.add (doto (JSplitPane.)
 	      (.setOrientation JSplitPane/VERTICAL_SPLIT)
 	      (.setName "splitPane")
@@ -161,6 +165,7 @@
 (let [r
     {:panel panel 
      :chart chart
+     :connection-label connection-label
      :name-trace-row name-trace-row 
      :table-model (:model tbl-model)
      :add-to-table (:add-row tbl-model)
@@ -177,14 +182,8 @@
 (def all-raw-names (atom #{}))
 (def runtime-names-of-interest (atom #{}))
 
-
-
-(def runtime-thread (atom nil))
-	
-
 (defn get-data-for [name]
   (let [data (get @all-runtime-data name)]
-    ;(println (str name ":" data)) 
     (when (not (empty? data))
       (swap! runtime-names-of-interest (fn [current] (conj current name))))
     data))
@@ -323,9 +322,7 @@
 	  (dorun (map (fn [combo] (.addActionListener combo combo-action)) @combos-on-center)))
 				
 	))
-    dialog
-
-))
+    dialog))
 
 (defn update-runtime-data []
   (swap! runtime-names-of-interest (fn [_] #{}))
@@ -346,10 +343,7 @@
 				  (get-data (without-type (with-type type @all-raw-names)) type server))))
 		     {} types)]
     (if (not (empty? data))
-
       (let [data-with-doubles (data-with-doubles data)]
 	(swap! all-raw-names (fn [current] (apply conj current (keys data-with-doubles))))
 	(swap! all-runtime-data (fn [all] (merge all data-with-doubles)))
-	(SwingUtilities/invokeAndWait update-runtime-data))
-      ;(println "There is no data")
-      )))
+	(SwingUtilities/invokeAndWait update-runtime-data)))))

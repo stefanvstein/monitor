@@ -5,8 +5,8 @@
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JCheckBox JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
-			DefaultComboBoxModel GroupLayout GroupLayout$Alignment JPopupMenu
-			BorderFactory JSpinner$DateEditor BoxLayout DefaultCellEditor))
+			DefaultComboBoxModel GroupLayout BoxLayout GroupLayout$Alignment JPopupMenu
+			BorderFactory JSpinner$DateEditor  DefaultCellEditor Box))
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
@@ -16,7 +16,9 @@
   (:import (java.io ObjectInputStream))
   (:import (java.util Calendar Date))
   (:import (java.text SimpleDateFormat))
+  (:import (java.beans PropertyChangeListener))
   (:import (org.jfree.chart.axis NumberAxis))
+  (:import (org.jfree.chart.event ChartProgressEvent ChartProgressListener))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities))
   (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond))
   (:import (monitor SplitDateSpinners)))
@@ -168,7 +170,10 @@
 						  (.addAndOrUpdate time-serie new-serie)))
 					;	  (.add time-serie new-serie)))
 					      data))
+;				  (println "start-chart-notify")
 				  (start-chart-notify)
+;				  (println "start-chart-notified")
+				  
 				  (catch Exception e
 				    (.printStackTrace e))))))]
     
@@ -444,12 +449,38 @@
 (defn new-analysis-panel []
 
   (let [status-label (JLabel. " ")
+	connection-label (JLabel. " ")
+			   	
+			  
+	status-panel (let [p (JPanel.)
+			   layout (BoxLayout. p BoxLayout/LINE_AXIS)]
+		       
+		       (doto p
+			 (.setLayout layout)
+			 (.add (doto connection-label
+			       (.addPropertyChangeListener (proxy [PropertyChangeListener] []
+							     (propertyChange [e] (if (= "text" (.getPropertyName e))
+										   (.invalidateLayout layout p)))))))
+			 (.add (Box/createRigidArea (Dimension. 5 0)))
+			 (.add (doto status-label
+				 (.addPropertyChangeListener (proxy [PropertyChangeListener] []
+							       (propertyChange [e] (if (= "text" (.getPropertyName e))
+										     (.invalidateLayout layout p)))))))))
+
 	panel (JPanel.)
 	time-series (TimeSeriesCollection.)
 ;	right-series (TimeSeriesCollection.)
-	chart (ChartFactory/createTimeSeriesChart 
+	chart (doto (ChartFactory/createTimeSeriesChart 
 					      nil nil nil 
 					      time-series false false false)
+		#_(.addProgressListener (proxy [ChartProgressListener] []
+					(chartProgress [e] (println "progress" (.getPercent e) (cond
+												(= (.getType e) ChartProgressEvent/DRAWING_FINISHED)
+												"finished"
+												(= (.getType e) ChartProgressEvent/DRAWING_STARTED)
+												"started"
+												:else "unknown")))))
+		)
 		
 	
 
@@ -505,7 +536,6 @@
 					     )))
 	]
 
-   
     (.setDateFormatOverride (.getDomainAxis (.getPlot chart)) (SimpleDateFormat. "yy-MM-dd HH:mm:ss"))
    ;(let [right-axis (NumberAxis.)
 ;	  plot (.getPlot chart)]
@@ -522,7 +552,7 @@
     (doto panel
       
       (.setLayout (BorderLayout.))
-      (.add status-label BorderLayout/SOUTH)
+      (.add status-panel BorderLayout/SOUTH)
       (.add (doto (JSplitPane.)
 	      (.setOrientation JSplitPane/VERTICAL_SPLIT)
 	      (.setName "splitPane")
@@ -553,6 +583,7 @@
 						       (.setAutoCreateRowSorter true)))))
 	      (.setTopComponent (doto (ChartPanel. 
 				       (doto chart))
+				  
 				  (.addComponentListener (proxy [ComponentAdapter] []
 							   (componentResized [e] 
 									     (let [c (.getComponent e)
@@ -574,6 +605,7 @@
  ;(ChartUtilities/applyCurrentTheme chart)				  
     {:panel panel
      :table-model tbl-model
+     :connection-label connection-label
      :status-label status-label
      :add-to-table (:add-row tbl-model)
      :add-column (:add-column tbl-model)
