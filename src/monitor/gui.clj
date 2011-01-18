@@ -23,7 +23,7 @@
   (catch Exception _))
 
 
-
+(def is-shuttingdown (ref false))
 (def frames-and-content (atom {}))
 
 (defn- connect [host port]
@@ -62,22 +62,26 @@
 	   (ref-set current-server nil))
 	  (update-connection-string)))
       (try
+	(if-not @is-shuttingdown
 	(when-let [server (connect @last-host @last-port)]
 	  (dosync (ref-set current-server server)
 		  (ref-set connection-string (str "Connected " @last-host ":" @last-port)))
-	  (update-connection-string))
+	  (update-connection-string)))
 	(catch Exception _))))
   
   (defn shutdown []
-    (dosync (ref-set current-server nil))
+    (when exit-on-shutdown
+      (System/exit 0))
+    (dosync (ref-set current-server nil)
+	    (ref-set is-shuttingdown true))
     (when @runtime-thread
       (.shutdown @runtime-thread)
       (while (.isTerminated @runtime-thread)
 	(try
 	  (.awaitTermination 1 TimeUnit/SECONDS)
 	  (catch Exception _))))
-    (when exit-on-shutdown
-      (System/exit 0)))
+    (dosync (ref-set is-shuttingdown false))
+    )
 
   (defn server [] @current-server)
 

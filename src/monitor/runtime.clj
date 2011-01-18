@@ -167,7 +167,8 @@
      :chart chart
      :connection-label connection-label
      :name-trace-row name-trace-row 
-     :table-model (:model tbl-model)
+					; :table-model (:model tbl-model)
+     :table-model tbl-model
      :add-to-table (:add-row tbl-model)
      :watched-names watched-names
      :add-column (:add-column tbl-model)
@@ -189,7 +190,8 @@
     data))
 
 (defn update-table-and-graphs [contents]
-  (let [table-model (:table-model contents)
+  (let [tbl-modl (:table-model contents)
+	table-model (:model tbl-modl)
 	current-columns (loop [i 0 r #{}]
 			  (if (< i (.getColumnCount table-model))
 			    (recur (inc i) (conj r (keyword (.getColumnName table-model i))))
@@ -233,8 +235,9 @@
 		     (do
 		       (.removeAllPoints trace)
 		       (doseq [d data]
-			 (.addPoint trace (TracePoint2D. (.getTime (key d)) (val d))))))
-		   )) 
+			 (.addPoint trace (TracePoint2D. (.getTime (key d)) (val d))))
+		       ((:set-value tbl-modl) a-name (val (last data))))
+		   ))) 
 	       watched-names))))
 
 (defn runtime-add-dialog [contents server]

@@ -100,7 +100,7 @@
 (defn create-table-model [remove-graph-fn recolor-graph-fn] 
   "rows and columns is expected to be atom []. Column 0 is expected to be a color"
   (let [rows (atom [])
-	columns (atom [:color :shown])
+	columns (atom [:color :shown :value])
 	model (proxy [AbstractTableModel] []
 		(getRowCount [] (count @rows))
 		(getColumnCount [] (count @columns))
@@ -112,7 +112,9 @@
 				(if (= 1 column)
 				  (let [r  ((:visible (get @rows row)) (:name (get @rows row)))]
 				    r)
-				  (the-keyword (:data (get @rows row)))))))
+				  (if (= 2 column)
+				    (:value (get @rows row))
+				    (the-keyword (:data (get @rows row))))))))
 		(getColumnClass [column] (if (= 0 column)
 					   Color
 					   (if (= 1 column)
@@ -120,7 +122,9 @@
 					     Object)))
 		(isCellEditable [row column] (= column 1))
 		(setValueAt [value row column]
-			    ((:visible (get @rows row)) (:name (get @rows row)) value)))
+			    (if (= column 1)
+			      ((:visible (get @rows row)) (:name (get @rows row)) value)
+			      (throw (IllegalStateException.)))))
 	add-row (fn [data color name visible-fn] 
 		  (let [fake-visible-flag (atom true)
 			fake-visible-fn (fn ([name]  @fake-visible-flag)
@@ -145,15 +149,22 @@
 				       (apply conj begining end)))))
 		     (.fireTableDataChanged model)
 		     (dotimes [row-number (count @rows)]
-		       (recolor-graph-fn row-number (:color (get @rows row-number)))))]
-   
+		       (recolor-graph-fn row-number (:color (get @rows row-number)))))
+	set-value (fn [name value]
+		    (swap! rows (fn [rows]
+				  (into [] (map (fn [d]
+						  (if (= (:name d) name)
+						    (assoc d :value value)
+						    d)) rows))))
+		    (.fireTableDataChanged model))] 
 	(assoc {} 
 	  :model model 
 	  :rows rows 
 	  :columns columns 
 	  :add-row add-row 
 	  :add-column add-column 
-	  :remove-row remove-row)))
+	  :remove-row remove-row
+	  :set-value set-value)))
 
 
 
