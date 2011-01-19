@@ -43,7 +43,13 @@
    
 	(reduce (fn [r e]
 		  (conj r (dissoc e :type))) [] data))) 
-    
+
+(defn simple-data-with-doubles [data]
+   (reduce (fn [r d]
+	     (assoc r (key d) (double (val d))))
+	   (sorted-map)
+	   data))
+
 (defn data-with-doubles [data]
   (reduce (fn [r e]
 	    (assoc r (key e) (reduce (fn [r d]
@@ -52,6 +58,8 @@
 				     (val e))))
 	  {}
 	  data))
+
+
 
 (def runtimes (atom #{}))
 
@@ -213,7 +221,8 @@
 			 (.setColor trace color)
 			 (.addTrace (:chart contents) trace)
 			 [trace row])]
-   (add-columns columns-to-be-added)
+    (add-columns columns-to-be-added)
+    ;(println watched-names)
 					;   (println (str (count (.getTraces (:chart contents))) "traces"))
    (dorun (map (fn [a-name] 
 		 (let [unique-name a-name ;(str (merge (sorted-map) a-name))
@@ -234,7 +243,7 @@
 			 ((:remove-row contents) row)))
 		     (do
 		       (.removeAllPoints trace)
-		       (doseq [d data]
+		       (doseq [d  (simple-data-with-doubles data)]
 			 (.addPoint trace (TracePoint2D. (.getTime (key d)) (val d))))
 		       ((:set-value tbl-modl) a-name (val (last data))))
 		   ))) 
@@ -260,7 +269,9 @@
 						result)))
 					  {}  @combomodels-on-center)]
 			  (let [func  (.getSelectedItem func-combo)
-				data (with-type-added func (data-with-doubles (get-data [name-values] func server)))]
+				duta  (get-data [name-values] func server)
+				data (with-type-added func  duta)]
+			    
 			    (swap! (:watched-names contents) (fn [current] (apply conj current (keys data))))
 			    (swap! all-raw-names (fn [current] (apply conj current (keys data))))
 			    (swap! all-runtime-data (fn [all] (merge all data)))
@@ -346,7 +357,8 @@
 				  (get-data (without-type (with-type type @all-raw-names)) type server))))
 		     {} types)]
     (if (not (empty? data))
-      (let [data-with-doubles (data-with-doubles data)]
-	(swap! all-raw-names (fn [current] (apply conj current (keys data-with-doubles))))
-	(swap! all-runtime-data (fn [all] (merge all data-with-doubles)))
+					;(let [data-with-doubles (data-with-doubles data)]
+      (do
+	(swap! all-raw-names (fn [current] (apply conj current (keys data))))
+	(swap! all-runtime-data (fn [all] (merge all data)))
 	(SwingUtilities/invokeAndWait update-runtime-data)))))

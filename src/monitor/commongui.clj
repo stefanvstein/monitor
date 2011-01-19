@@ -51,9 +51,11 @@
      (let [fun (condp = func
 		   "Raw" (fn [e] e)
 		   "Average/Minute" (fn [e] (sliding-average e 1 MINUTE MINUTE))
+		   "Average" (fn [e] (sliding-average e 1 MINUTE MINUTE))
 		   "Average/Hour" (fn [e] (sliding-average e 1 HOUR HOUR))
 		   "Average/Day" (fn [e] (sliding-average e 1 DAY DAY))
 		   "Mean/Minute" (fn [e] (sliding-mean e 1 MINUTE MINUTE))
+		   "Mean" (fn [e] (sliding-mean e 1 MINUTE MINUTE))
 		   "Mean/Hour" (fn [e] (sliding-mean e 1 HOUR HOUR))
 		   "Mean/Day" (fn [e] (sliding-mean e 1 DAY DAY))
 		   "Min/Minute" (fn [e] (sliding-min e 1 MINUTE MINUTE))
@@ -86,7 +88,7 @@
        (let [stringed-names-in-hashmaps (reduce 
 					(fn [r i]
 					  (conj r (java.util.HashMap. 
-						   (reduce 
+						   ^java.util.Map (reduce 
 						    (fn [a b]
 						      (assoc a (name (key b)) (val b))) 
 						    {} i)))
@@ -213,19 +215,45 @@
     action
 ))
 
+(defn isNan [n]
+  (or (and (instance? Double n) (.isNaN ^Double n))
+      (and (instance? Float n) (.isNaN ^Float n))))
+
 (defn with-nans [data distance-in-millis]
   (let [without-nans  #(reduce (fn [r i]
-				(if (.isNaN (val i))
-				  r
-				  (conj r i)))
-			      [] %)
+				 (let [value (val i)]
+				   (if (isNan value)
+				     r
+				     (conj r i))))
+			       [] %)
 	last-milli (atom 1)
-	with-nans #(reduce (fn [r i]
-			     (let [currentMilli (.getTime (key i))]
-			       (if (< distance-in-millis (- currentMilli @last-milli))
-				 (do
-				   (swap! last-milli (fn [_] currentMilli))
-				   (assoc r (Date. (- currentMilli 1)) (Double/NaN) (Date. currentMilli) (val i)))
-				 (do  (swap! last-milli (fn [_] currentMilli)) (assoc r (key i) (val i))))))
-			   (sorted-map) %)]
+;	with-nans #(reduce (fn [r i]
+;			     (let [currentMilli (.getTime ^java.util.Date (key i))]
+;			       (if (< distance-in-millis (- currentMilli @last-milli))
+;				 (do
+;				   (swap! last-milli (fn [_] currentMilli))
+;				   (assoc r (Date. ^Long (- currentMilli 1)) (Double/NaN) (Date. currentMilli) (val i)))
+;				 (do  (swap! last-milli (fn [_] currentMilli)) (assoc r (key i) (val i))))))
+;			   (sorted-map) %)
+	with-nans (fn [d]
+		    (loop [result (sorted-map)
+			   last-milli 1
+			   i (seq d)]
+		      (let [current (first i)
+			    currentValue (val current)
+			    currentDate (key current)
+			    currentMilli (.getTime ^java.util.Date currentDate)
+			    remaining (next i)
+			    resulting (if (< distance-in-millis (- currentMilli last-milli))
+					(assoc result (Date. ^Long (- currentMilli 1)) (Double/NaN) (Date. currentMilli) currentValue)
+					(assoc result currentDate currentValue))]
+					  
+			(if remaining 
+			    (recur resulting
+				   currentMilli
+				   remaining)
+			   resulting))))]
+			  
+				 
+		      
     (with-nans (without-nans data))))

@@ -106,7 +106,7 @@
 			 (/ (reduce (fn [a b]
 				      (+ a (val b)))
 				    0 history)
-			    (count history))})]))]
+			    (double (count history)))})]))]
     (sliding s algo history-length history-unit granularity)))
 
 (defn sliding-mean [s history-length history-unit granularity]

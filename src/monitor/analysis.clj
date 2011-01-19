@@ -116,6 +116,7 @@
 				      color (colors)]
 				  (. serie setNotify false)
 				  (. graph addSeries serie)
+;				  (println "Count" (.getSeriesCount graph))
 				  (let [visible-fn (fn ([_]
 							  
 							  (if-let [index (index-by-name graph identifier)]
@@ -138,30 +139,30 @@
 		       (fn []
 			 (let [datas (into [] (take 5 @data-queue))]
 			   (when-not (zero? (count datas))
-
+			     
 			     (swap! data-queue (fn [dq] (vec (drop (count datas) dq))))
 			     (let [u (swap! num-rendered (fn [d] (+ d (count datas) )))
 				   num @num-to-render]
-			     (println "Rendering" u "of" num)
+			     ;(println "Rendering" u "of" num)
 			       (.setText statusbar (str "Rendering " u " of " num)))
 			     
-				  (try
-				    (stop-chart-notify)
-				    (doseq [data datas]
-				  (dorun (map (fn [data]
-						(let [data-key (let [dk (assoc (key data) :type func-string)]
-								 (if (= 0 shift)
-								   dk
-								   (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
-								     (assoc dk :shifted (str (.format df from) " to " (.format df
-															       (Date. (long (+ (.getTime ^Date from) shift)))
-															       ))))))
-						      make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
-						      data-values (make-double-values (val data))
+			     (try
+			       (stop-chart-notify)
+			       (doseq [data datas]
+				 (dorun (map (fn [data]
+					       (let [data-key (let [dk (assoc (key data) :type func-string)]
+								(if (= 0 shift)
+								  dk
+								  (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
+								    (assoc dk :shifted (str (.format df from) " to " (.format df
+															      (Date. (long (+ (.getTime ^Date from) shift)))))))))
+						     make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
+					;						      data-values (make-double-values (val data))    ;???????
+						     data-values (val data) ; See above
 						      identifier (str data-key)
 						      ^TimeSeries time-serie (if-let [serie (. graph getSeries identifier)]
-								   serie
-								   (create-new-time-serie data-key identifier))
+									       serie
+									       (create-new-time-serie data-key identifier))
 						      data-from-serie (time-serie-to-sortedmap time-serie)
 						      data-with-new-data (merge data-from-serie data-values)
 						      nan-distance (condp = func-string
@@ -198,14 +199,14 @@
 										   result)
 										 result))))
 									 data))
-						      reduced-samples (let [r (reduce-samples data-with-nans)]
-;									(println (count data-with-nans) "->" (count r))
-									r)
+						      ;reduced-samples (reduce-samples data-with-nans)
+						      reduced-samples data-with-nans
+
 						      temp-serie (doto (TimeSeries. "") (.setNotify false))
 						      new-serie (reduce (fn [^TimeSeries r i]
 									  (.add r  (TimeSeriesDataItem. 
 										    (Millisecond. (key i)) 
-										    ^Double (val i)))
+										    ^Number (val i)))
 									  r)
 									temp-serie reduced-samples)]
 						 
@@ -215,7 +216,9 @@
 					      data)))
 				  (catch Exception e
 				    (.printStackTrace e))
-				  (finally   (start-chart-notify))))))))]
+				  (finally   (start-chart-notify)
+					     ;Why why why. Dont wanna do this
+					     (.fireChartChanged chart))))))))]
     
     (future
       (try
@@ -583,10 +586,19 @@
 									    (if (< ind 0)
 									      (dec (Math/abs ind))
 									      ind))
-								   data  (.getDataItem s index)
-								   period (.getPeriod data)]
-							       ((:set-value tbl-model) (.getKey s) (.getValue data))
-							    
+								   data  (if (= index (.getItemCount s))
+									   nil
+									   (.getDataItem s index))
+
+								   period (if data
+									    (.getPeriod data)
+									    nil)]
+							       ((:set-value tbl-model) (.getKey s) (if data
+												     (let [v (.getValue data)]
+												       (if (isNan v)
+													 "" v))
+												     ""))
+							       
 
 							     )))))))
 
