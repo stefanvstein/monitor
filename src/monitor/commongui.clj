@@ -103,25 +103,23 @@
   "rows and columns is expected to be atom []. Column 0 is expected to be a color"
   (let [rows (atom [])
 	columns (atom [:color :shown :value])
+	is-visible (fn is-visible [rows row]
+		     ((:visible (get rows row)) (:name (get rows row))))
+		     
 	model (proxy [AbstractTableModel] []
 		(getRowCount [] (count @rows))
 		(getColumnCount [] (count @columns))
 		(getColumnName [column] (name (get @columns column))) 
 		(getValueAt [row column]
-			    (let [the-keyword (nth @columns column)]
-			      (if (= 0 column) 
-				(:color (get @rows row))
-				(if (= 1 column)
-				  (let [r  ((:visible (get @rows row)) (:name (get @rows row)))]
-				    r)
-				  (if (= 2 column)
-				    (:value (get @rows row))
-				    (the-keyword (:data (get @rows row))))))))
-		(getColumnClass [column] (if (= 0 column)
-					   Color
-					   (if (= 1 column)
-					     Boolean
-					     Object)))
+			      (condp = column
+				  0 (:color (get @rows row))
+				  1 (is-visible @rows row)
+				  2 (:value (get @rows row))
+				  ((nth @columns column) (:data (get @rows row)))))
+		(getColumnClass [column] (condp = column
+					     0 Color
+					     1 Boolean
+					     Object))
 		(isCellEditable [row column] (= column 1))
 		(setValueAt [value row column]
 			    (if (= column 1)
@@ -227,18 +225,12 @@
 				     (conj r i))))
 			       [] %)
 	last-milli (atom 1)
-;	with-nans #(reduce (fn [r i]
-;			     (let [currentMilli (.getTime ^java.util.Date (key i))]
-;			       (if (< distance-in-millis (- currentMilli @last-milli))
-;				 (do
-;				   (swap! last-milli (fn [_] currentMilli))
-;				   (assoc r (Date. ^Long (- currentMilli 1)) (Double/NaN) (Date. currentMilli) (val i)))
-;				 (do  (swap! last-milli (fn [_] currentMilli)) (assoc r (key i) (val i))))))
-;			   (sorted-map) %)
+
 	with-nans (fn [d]
+		    (when-let [ds (seq d)]
 		    (loop [result (sorted-map)
 			   last-milli 1
-			   i (seq d)]
+			   i ds]
 		      (let [current (first i)
 			    currentValue (val current)
 			    currentDate (key current)
@@ -252,7 +244,7 @@
 			    (recur resulting
 				   currentMilli
 				   remaining)
-			   resulting))))]
+			   resulting)))))]
 			  
 				 
 		      

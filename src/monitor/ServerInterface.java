@@ -9,6 +9,8 @@ import java.util.SortedMap;
 public interface ServerInterface extends Remote{
     Map<String, SortedMap<Date, Number>> rawData(Date from, Date to, Iterable<String> nameSpec) throws RemoteException;
     Map<String, SortedMap<Date, Number>> rawLiveData(Iterable<Map<String, String>> names) throws RemoteException;
+    void add(Map<String, String> name, Map<Date, Number> data) throws RemoteException;
+    void remove(Date from, Date to, Map<String, String> name) throws RemoteException;
     Iterable<Map<String, String>> rawLiveNames() throws RemoteException;
     Iterable<Map<String, String>> rawNames(Date from, Date to) throws RemoteException;
     void ping() throws RemoteException;

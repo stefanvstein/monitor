@@ -18,7 +18,7 @@
   (:import (java.text SimpleDateFormat))
   (:import (java.beans PropertyChangeListener))
   (:import (org.jfree.chart.axis NumberAxis))
-  (:import (org.jfree.chart.event ChartProgressEvent ChartProgressListener))
+  (:import (org.jfree.chart.event ChartProgressEvent ChartProgressListener RendererChangeEvent))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities))
   (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond))
   (:import (monitor SplitDateSpinners)))
@@ -28,6 +28,12 @@
     [d1 d2]
     [d2 d1]))
 
+(defn- update-chart [chart]
+  (SwingUtilities/invokeLater (fn [] 
+				(let [r (.getRenderer (.getPlot chart))
+				      rc (RendererChangeEvent. r true)]
+				  (.notifyListeners r rc)))))
+  
 (defn on-update
   "Returns panel and models"
   [names add-buttons]
@@ -90,21 +96,21 @@
 
 					;(defn on-add-to-analysis [from to shift name-values all-names func-string graph colors chart add-to-table add-column statusbar server]
 (defn on-add-to-analysis [from to shift name-values all-names func-string
-			  {^TimeSeriesCollection graph :time-series
+			  {^TimeSeriesCollection time-series-coll :time-series
 			   colors :colors
 			   ^JFreeChart chart  :chart
 			   add-to-table :add-to-table
 			   add-column :add-column
-			   statusbar :status-label
+			   status-label :status-label
 			   data-queue :transfer-queue
 			   num-to-render :num-to-render
 			   num-rendered :num-rendered}
 			  server]
   (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
-					;(dorun (map (fn [timeseries] (.setNotify timeseries false)) (. graph getSeries)))
+					;(dorun (map (fn [timeseries] (.setNotify timeseries false)) (. time-series-coll getSeries)))
 			    )
 	start-chart-notify (fn start-chart-notify []
-			     ;(dorun (map (fn [timeseries] (.setNotify timeseries true)) (. graph getSeries)))
+			     ;(dorun (map (fn [timeseries] (.setNotify timeseries true)) (. time-series-coll getSeries)))
 			     (.setNotify chart true))
 
 	shift-time (if (= 0 shift)
@@ -115,41 +121,50 @@
 				(let [serie (TimeSeries. identifier)
 				      color (colors)]
 				  (. serie setNotify false)
-				  (. graph addSeries serie)
+				  (. time-series-coll addSeries serie)
 ;				  (println "Count" (.getSeriesCount graph))
 				  (let [visible-fn (fn ([_]
 							  
-							  (if-let [index (index-by-name graph identifier)]
+							  (if-let [index (index-by-name time-series-coll identifier)]
 							    (.. chart (getPlot) (getRenderer) (getItemVisible index 0 ))
 							    false))
 						     ([_ visible]
-							(when-let [index (index-by-name graph identifier)]
+							(when-let [index (index-by-name time-series-coll identifier)]
 							  (.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))
 							  )))]
 				    (.. chart 
-					(getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries graph)))
+					(getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries time-series-coll)))
 										color))
 				    
 				    (add-to-table data-key color identifier visible-fn))
 				  (dorun (map (fn [i] (add-column i)) (keys data-key))) 
 				  serie))
+	remove-with-empty-cols-as-val (fn [data]
+					(let [r (into {} (filter #(seq (val %)) data))]
+					  (when (seq r)
+					    r)))
+
 	updatechart (fn [data]
-		      (swap! data-queue conj data)
-		      (SwingUtilities/invokeLater
-		       (fn []
-			 (let [datas (into [] (take 5 @data-queue))]
-			   (when-not (zero? (count datas))
+		      (let [d (remove-with-empty-cols-as-val data)]
+			(if-not d
+			  (SwingUtilities/invokeLater
+			   #(.setText status-label (str "Rendering " (swap! num-rendered inc) " of " @num-to-render)))
+			  (swap! data-queue conj d))
+			(SwingUtilities/invokeLater
+			 (fn []
+			   (stop-chart-notify)
+			   (try
+			     (let [datas (into [] (take 10 @data-queue))]
+			       (when-not (zero? (count datas))
 			     
-			     (swap! data-queue (fn [dq] (vec (drop (count datas) dq))))
-			     (let [u (swap! num-rendered (fn [d] (+ d (count datas) )))
-				   num @num-to-render]
-			     ;(println "Rendering" u "of" num)
-			       (.setText statusbar (str "Rendering " u " of " num)))
+				 (swap! data-queue (fn [dq] (vec (drop (count datas) dq))))
+				 (let [u (swap! num-rendered (fn [d] (+ d (count datas) )))
+				       num @num-to-render]
+				   (.setText status-label (str "Rendering " u " of " num)))
 			     
-			     (try
-			       (stop-chart-notify)
-			       (doseq [data datas]
-				 (dorun (map (fn [data]
+			   
+				 (doseq [data datas]
+				   (dorun (map (fn [data]
 					       (let [data-key (let [dk (assoc (key data) :type func-string)]
 								(if (= 0 shift)
 								  dk
@@ -159,66 +174,66 @@
 						     make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
 					;						      data-values (make-double-values (val data))    ;???????
 						     data-values (val data) ; See above
-						      identifier (str data-key)
-						      ^TimeSeries time-serie (if-let [serie (. graph getSeries identifier)]
-									       serie
-									       (create-new-time-serie data-key identifier))
-						      data-from-serie (time-serie-to-sortedmap time-serie)
-						      data-with-new-data (merge data-from-serie data-values)
-						      nan-distance (condp = func-string
-								       "Raw" (* 30 1000)
-								       "Change/Second" (* 30 1000)
-								       "Average/Minute" (* 2 60 1000)
-								       "Mean/Minute" (* 2 60 1000)
-								       "Min/Minute" (* 2 60 1000)
-								       "Max/Minute" (* 2 60 1000)
-								       "Change/Minute" (* 2 60 1000)
-								       "Average/Hour" (* 2 60 60 1000)
-								       "Mean/Hour" (* 2 60 60 1000)
-								       "Min/Hour" (* 2 60 60 1000)
-								       "Max/Hour" (* 2 60 60 1000)
-								       "Change/Hour" (* 2 60 60 1000)
-								       "Average/Day" (* 2 24 60 60 1000)
-								       "Mean/Day" (* 2 24 60 60 1000)
-								       "Min/Day" (* 2 24 60 60 1000)
-								       "Max/Day" (* 2 24 60 60 1000))
-						      data-with-nans (with-nans data-with-new-data nan-distance)
-						      reduce-samples (fn reduce-samples [data] 
-								       (if (next data) 
-									 (loop [s (next data), result data, previous (first data), was-equal false]
-									   (let [current (first s)]
-									     (if-let [following (next s)]
-									       (if (= (val previous) (val current))
-										 (if was-equal
-										   (recur following (dissoc result (key previous)) current true)
-										   (recur following result current true))
-										 (recur following result current false))
-									       (if (= (val previous) (val current)) 
-										 (if was-equal
-										   (dissoc result (key previous))
-										   result)
-										 result))))
-									 data))
-						      ;reduced-samples (reduce-samples data-with-nans)
-						      reduced-samples data-with-nans
-
-						      temp-serie (doto (TimeSeries. "") (.setNotify false))
-						      new-serie (reduce (fn [^TimeSeries r i]
-									  (.add r  (TimeSeriesDataItem. 
-										    (Millisecond. (key i)) 
-										    ^Number (val i)))
-									  r)
-									temp-serie reduced-samples)]
+						     identifier (str data-key)
+						     ^TimeSeries time-serie (if-let [serie (. time-series-coll getSeries identifier)]
+									      serie
+									      (create-new-time-serie data-key identifier))
+						     data-from-serie (time-serie-to-sortedmap time-serie)
+						     data-with-new-data (merge data-from-serie data-values)
+						     nan-distance (condp = func-string
+								      "Raw" (* 30 1000)
+								      "Change/Second" (* 30 1000)
+								      "Average/Minute" (* 2 60 1000)
+								      "Mean/Minute" (* 2 60 1000)
+								      "Min/Minute" (* 2 60 1000)
+								      "Max/Minute" (* 2 60 1000)
+								      "Change/Minute" (* 2 60 1000)
+								      "Average/Hour" (* 2 60 60 1000)
+								      "Mean/Hour" (* 2 60 60 1000)
+								      "Min/Hour" (* 2 60 60 1000)
+								      "Max/Hour" (* 2 60 60 1000)
+								      "Change/Hour" (* 2 60 60 1000)
+								      "Average/Day" (* 2 24 60 60 1000)
+								      "Mean/Day" (* 2 24 60 60 1000)
+								      "Min/Day" (* 2 24 60 60 1000)
+								      "Max/Day" (* 2 24 60 60 1000))
+						     data-with-nans (with-nans data-with-new-data nan-distance)
+						     reduce-samples (fn reduce-samples [data] 
+								      (if (next data) 
+									(loop [s (next data), result data, previous (first data), was-equal false]
+									  (let [current (first s)]
+									    (if-let [following (next s)]
+									      (if (= (val previous) (val current))
+										(if was-equal
+										  (recur following (dissoc result (key previous)) current true)
+										  (recur following result current true))
+										(recur following result current false))
+									      (if (= (val previous) (val current)) 
+										(if was-equal
+										  (dissoc result (key previous))
+										  result)
+										result))))
+									data))
+					;reduced-samples (reduce-samples data-with-nans)
+						     reduced-samples data-with-nans
+						     
+						     temp-serie (doto (TimeSeries. "") (.setNotify false))
+						     new-serie (reduce (fn [^TimeSeries r i]
+									 (.add r  (TimeSeriesDataItem. 
+										   (Millisecond. (key i)) 
+										   ^Number (val i)))
+									 r)
+								       temp-serie reduced-samples)]
 						 
 						    
-						  (.clear time-serie)
-						  (.addAndOrUpdate time-serie new-serie)))
-					      data)))
-				  (catch Exception e
-				    (.printStackTrace e))
-				  (finally   (start-chart-notify)
-					     ;Why why why. Dont wanna do this
-					     (.fireChartChanged chart))))))))]
+						 (.clear time-serie)
+						 (.addAndOrUpdate time-serie new-serie)))
+					       data)))
+
+				  ))
+		       (catch Exception e
+			 (.printStackTrace e))
+		       (finally   (start-chart-notify)))))))]
     
     (future
       (try
@@ -226,20 +241,12 @@
 	  (let [days (full-days-between from to)]
 	    (swap! num-to-render (fn [d] (+ d (count days))))
 	    (dorun (map (fn [ e ]
-			  
-			  
 			  (updatechart (shift-time (get-data (first e)
 							     (second e)
 							     name-values
 							     func-string
 							     server))))
-			days))
-		 
-	    (SwingUtilities/invokeLater (fn []
-					  (when (= @num-rendered @num-to-render)
-					    (reset! num-rendered 0)
-					    (reset! num-to-render 0)
-					    (.setText statusbar " ")))))
+			days)))
 		 
 	  (let [names-of-interest (let [sel-as-map (apply assoc {} name-values)]
 				    (reduce (fn [c a] 
@@ -257,17 +264,17 @@
 							     func-string
 							     server))))
 		      
-			names-of-interest))
-	    (SwingUtilities/invokeLater (fn []
-					  (when (= @num-rendered @num-to-render)
-					    (reset! num-rendered 0)
-					    (reset! num-to-render 0)
-					    (.setText statusbar " "))))))
-	    
-	    
-	       
-	    (catch Exception e
-	      (.printStackTrace e))))))
+			names-of-interest))))
+	
+	(SwingUtilities/invokeLater (fn []
+				      (when (= @num-rendered @num-to-render)
+					(reset! num-rendered 0)
+					(reset! num-to-render 0)
+					(.setText status-label " "))))
+	
+	(update-chart chart)
+	(catch Exception e
+	  (.printStackTrace e))))))
 
 
 
