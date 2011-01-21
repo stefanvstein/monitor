@@ -125,7 +125,8 @@
 			    (if (= column 1)
 			      ((:visible (get @rows row)) (:name (get @rows row)) value)
 			      (throw (IllegalStateException.)))))
-	add-row (fn [data color name visible-fn] 
+	add-row (fn [data color name visible-fn]
+;		  (println "Adding-row" name)
 		  (let [fake-visible-flag (atom true)
 			fake-visible-fn (fn ([name]  @fake-visible-flag)
 					  ([name value]  (reset! fake-visible-flag value)))
@@ -151,11 +152,16 @@
 		     (dotimes [row-number (count @rows)]
 		       (recolor-graph-fn row-number (:color (get @rows row-number)))))
 	set-value (fn [name value]
+		    (let [v (if (or (instance? Double value) (instance? Float value))
+			      (String/format "%f" (into-array [value]))
+			      (if (integer? value)
+				(String/format "%d" (into-array [value]))
+				value))]
 		    (swap! rows (fn [rows]
 				  (into [] (map (fn [d]
 						  (if (= (:name d) name)
-						    (assoc d :value value)
-						    d)) rows))))
+						    (assoc d :value v)
+						    d)) rows)))))
 		    (.fireTableDataChanged model))] 
 	(assoc {} 
 	  :model model 

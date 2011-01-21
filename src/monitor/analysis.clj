@@ -77,7 +77,14 @@
 		(first combos-and-models)))
     [center-panel (second combos-and-models)]
     ))
-		      
+
+(defn- last-from-timeserie "nil if none" [timeserie]
+    (let [n (.getItemCount timeserie)
+	  i (when-not (zero? n)
+	      (.getDataItem timeserie (dec n)))]
+    (when i
+      (assoc {} (Date. (.getFirstMillisecond (.getPeriod i))) (.getValue i)))))
+  
 (defn- time-serie-to-sortedmap [timeserie]
   (reduce (fn [r i] 
 	  (assoc r (Date. (.getFirstMillisecond (.getPeriod i ))) (.getValue i))) 
@@ -178,7 +185,7 @@
 						     ^TimeSeries time-serie (if-let [serie (. time-series-coll getSeries identifier)]
 									      serie
 									      (create-new-time-serie data-key identifier))
-						     data-from-serie (time-serie-to-sortedmap time-serie)
+						     data-from-serie (time-serie-to-sortedmap time-serie) ; use last-from-timeserie and keep the old in the time serie
 						     data-with-new-data (merge data-from-serie data-values)
 						     nan-distance (condp = func-string
 								      "Raw" (* 30 1000)
@@ -237,6 +244,8 @@
     
     (future
       (try
+	(SwingUtilities/invokeLater (fn []
+					(.setText status-label "Retrieving...")))
 	(if (= "Raw" func-string)
 	  (let [days (full-days-between from to)]
 	    (swap! num-to-render (fn [d] (+ d (count days))))
@@ -646,12 +655,7 @@
 							     (.setOpaque true)
 							     (.setBackground color)
 							     ))))
-							 ;(.setDefaultRenderer Boolean
-							;		      (proxy [TableCellRenderer] []
-							;			(getTableCellRendererComponent [table value selected focus row column]
-							;						       (doto (JCheckBox.)
-					;							 (.setSelected (boolean value))))))
-							 
+									 
 						       (.setModel (:model tbl-model))
 						       (.setCellSelectionEnabled false)
 						       (.setName "table")
@@ -661,7 +665,6 @@
 						       (.setAutoCreateRowSorter true)))))
 	      (.setTopComponent (let [chart-panel (ChartPanel. chart)]
 				       
-				  ;(.setEntityCollection (.getChartRenderingInfo chart-panel) nil)     ;This may destroy some functionality, and does probably not improve too much
 				  (doto chart-panel
 				  (.addComponentListener (proxy [ComponentAdapter] []
 							   (componentResized [e] 
@@ -682,7 +685,9 @@
       (.setCellEditor show-column (DefaultCellEditor. (JCheckBox.))))
     
  ;(ChartUtilities/applyCurrentTheme chart)				  
-    {:panel panel
+    {
+     :data (atom {})
+     :panel panel
      :table-model tbl-model
      :connection-label connection-label
      :status-label status-label
