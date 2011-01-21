@@ -275,7 +275,7 @@
 			   (*add* (assoc (key i) :pid pid) the-time (val i))) 
 			 (memory-values mem-fns (mbean-server))))
 
-	       (dorun (map (fn [i]  
+	       #_(dorun (map (fn [i]  
 			     (*add* (assoc (key i) :pid pid) the-time (val i) threads?)) 
 			   (thread-info thread-beans)))
 

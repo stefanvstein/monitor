@@ -3,6 +3,7 @@
   (:use [clojure.contrib import-static])
   (:import (javax.swing.table AbstractTableModel))
   (:import (java.util Date))
+  (:import (java.text DecimalFormat))
   (:import (java.awt Color))
   (:import (java.awt.event ActionListener))
   )
@@ -153,7 +154,7 @@
 		       (recolor-graph-fn row-number (:color (get @rows row-number)))))
 	set-value (fn [name value]
 		    (let [v (if (or (instance? Double value) (instance? Float value))
-			      (String/format "%f" (into-array [value]))
+			      (.format (DecimalFormat. "###################0.#####") value)
 			      (if (integer? value)
 				(String/format "%d" (into-array [value]))
 				value))]
