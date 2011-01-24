@@ -22,17 +22,18 @@
 	    (assoc result (keyword (key name)) (val name))) 
 	  {} names))
 
-(defn get-names ([from to server]
-  (let [raw-names (.rawNames (server) from to)
-	names (reduce (fn [result a-map]
-			(conj result (names-as-keyworded a-map))) [] raw-names)]
-    (reduce (fn [result name]
-	      (reduce (fn [r per-subname] 
-			(if-let [this-name (get result (key per-subname))]
-			  (assoc r (key per-subname) (conj this-name (val per-subname)))
-			  (assoc r (key per-subname) [(val per-subname)])))
-		      result 
-		      (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
+(defn get-names
+  ([from to server]
+     (let [raw-names (.rawNames (server) from to)
+	   names (reduce (fn [result a-map]
+			   (conj result (names-as-keyworded a-map))) [] raw-names)]
+       (reduce (fn [result name]
+		 (reduce (fn [r per-subname] 
+			   (if-let [this-name (get result (key per-subname))]
+			     (assoc r (key per-subname) (conj this-name (val per-subname)))
+			     (assoc r (key per-subname) [(val per-subname)])))
+			 result 
+			 (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
 	       (sorted-map) names)))
   ([server]
      (let [raw-names (.rawLiveNames server)
@@ -48,7 +49,7 @@
 	       (sorted-map) names))))
 
 (defn- transform
-  ([data func]
+  [data func]
      (let [fun (condp = func
 		   "Raw" (fn [e] e)
 		   "Average/Minute" (fn [e] (sliding-average e 1 MINUTE MINUTE))
@@ -71,7 +72,7 @@
 		   (throw (IllegalArgumentException. (str func " not yet implemented"))))]
        (if (not= func "Raw") 
 	 (into (sorted-map) (fun data))
-	 data))))
+	 data)))
 
 (defn get-data 
   ([from to names func-string server]
@@ -224,16 +225,16 @@
   (or (and (instance? Double n) (.isNaN ^Double n))
       (and (instance? Float n) (.isNaN ^Float n))))
 
-(defn with-nans [data distance-in-millis]
-  (let [without-nans  #(reduce (fn [r i]
-				 (let [value (val i)]
-				   (if (isNan value)
-				     r
-				     (conj r i))))
-			       [] %)
-	last-milli (atom 1)
+(defn without-nans [m]
+  (reduce (fn [r i]
+	    (let [value (val i)]
+	      (if (isNan value)
+		r
+		(conj r i))))
+	  (sorted-map) m))
 
-	with-nans (fn [d]
+(defn with-nans [data distance-in-millis]
+  (let [with-nans (fn [d]
 		    (when-let [ds (seq d)]
 		    (loop [result (sorted-map)
 			   last-milli 1

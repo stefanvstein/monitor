@@ -65,7 +65,8 @@
 			    (. (. InetAddress getLocalHost) getCanonicalHostName)
 			    (let [n (. addr getCanonicalHostName)]
 			      (if (re-matches #"([0-9]+\.){3}[0-9]+" n)
-				(do (println "Here you are")(. addr getHostName))
+				(do 
+				    (. addr getHostName))
 				n)
 			      )))
 			(catch UnknownHostException _ host)))))

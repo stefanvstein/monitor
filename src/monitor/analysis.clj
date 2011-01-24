@@ -78,6 +78,7 @@
     [center-panel (second combos-and-models)]
     ))
 
+  
 (defn- last-from-timeserie "nil if none" [timeserie]
     (let [n (.getItemCount timeserie)
 	  i (when-not (zero? n)

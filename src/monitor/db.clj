@@ -100,7 +100,19 @@
 (defn- save-index [days day]
   (when @dayindex-db
     (when-let [current (get days day)]
-      (db-put @dayindex-db day (:by-index current)))))
+      (let [failed (atom true)
+	    retries (atom 0)]
+	(while (and @failed (> 500 @retries))
+	  (try
+	    (db-put @dayindex-db day (:by-index current))
+	    (reset! failed false)
+	    (catch Exception e
+	      (if (some #(instance? LockConflictException %) (causes e))
+		(do (swap! retries (fn [c] (inc c)))
+		    (println (java.util.Date.) " deadlock in save-index")
+		    (try (Thread/sleep (rand-int 100))
+			 (catch Exception e)))
+		(throw e)))))))))
 
 (defn- index-for-name [day name]
   (let [the-day (get-day day)]
@@ -204,7 +216,7 @@
 
 ; :cache-bytes (* 1024 1024 10)
 (defmacro using-db-env [path & body]
-  `(when-let [db-env# (db-env-open ~path  :allow-create true  :transactional true :txn-no-sync true)]
+  `(when-let [db-env# (db-env-open ~path  :allow-create true  :transactional true :txn-no-sync true :cache-bytes (* 500 1024 1024))]
      (when-let [dayindex-db# (db-open db-env# "day-index" :allow-create true)]
        (reset! dayindex-db dayindex-db#)
        (reset! current-day-indexes {})
@@ -496,7 +508,7 @@
 			 (if (some #(instance? LockConflictException %)(causes e))
 			   (do (swap! retries (fn [c] (inc c)))
 			       (println (str (java.util.Date.) " deadlock in add"))
-			       (try (Thread/sleep 500)
+			       (try (Thread/sleep (rand-int 100))
 				    (catch Exception e)))
 			   (throw e)))))))))
 
