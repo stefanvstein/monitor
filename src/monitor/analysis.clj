@@ -112,7 +112,8 @@
 			   status-label :status-label
 			   data-queue :transfer-queue
 			   num-to-render :num-to-render
-			   num-rendered :num-rendered}
+			   num-rendered :num-rendered
+			   name-as-comparable :name-as-comparable}
 			  server]
   (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
 					;(dorun (map (fn [timeseries] (.setNotify timeseries false)) (. time-series-coll getSeries)))
@@ -125,8 +126,9 @@
 		     (fn [a] a)
 		     (fn [a] (with-keys-shifted a (fn [d] d) (fn [#^Date d] (Date. (long (+ (.getTime d) shift)))))))
 		     
-	create-new-time-serie (fn [data-key identifier]
-				(let [serie (TimeSeries. identifier)
+	create-new-time-serie (fn [data-key]
+				(let [identifier (name-as-comparable data-key)
+				      serie (TimeSeries. identifier)
 				      color (colors)]
 				  (. serie setNotify false)
 				  (. time-series-coll addSeries serie)
@@ -144,7 +146,7 @@
 					(getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries time-series-coll)))
 										color))
 				    
-				    (add-to-table data-key color identifier visible-fn))
+				    (add-to-table data-key color visible-fn))
 				  (dorun (map (fn [i] (add-column i)) (keys data-key))) 
 				  serie))
 	remove-with-empty-cols-as-val (fn [data]
@@ -182,10 +184,9 @@
 						     make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
 					;						      data-values (make-double-values (val data))    ;???????
 						     data-values (val data) ; See above
-						     identifier (str data-key)
-						     ^TimeSeries time-serie (if-let [serie (. time-series-coll getSeries identifier)]
+						     ^TimeSeries time-serie (if-let [serie (. time-series-coll getSeries (name-as-comparable data-key))]
 									      serie
-									      (create-new-time-serie data-key identifier))
+									      (create-new-time-serie data-key))
 						     data-from-serie (time-serie-to-sortedmap time-serie) ; use last-from-timeserie and keep the old in the time serie
 						     data-with-new-data (merge data-from-serie data-values)
 						     nan-distance (condp = func-string
@@ -512,8 +513,12 @@
 
   (let [status-label (JLabel. " ")
 	connection-label (JLabel. " ")
-			   	
-			  
+	comparables-and-names (atom {})			   	
+	name-as-comparable (memoize (fn [name]
+				    (let [c (str name)]
+				      (swap! comparables-and-names assoc c name)
+				      c)))
+	comparable-as-name (fn [c] (get @comparables-and-names c))
 	status-panel (let [p (JPanel.)
 			   layout (BoxLayout. p BoxLayout/LINE_AXIS)]
 		       
@@ -610,11 +615,13 @@
 								   period (if data
 									    (.getPeriod data)
 									    nil)]
-							       ((:set-value tbl-model) (.getKey s) (if data
-												     (let [v (.getValue data)]
-												       (if (isNan v)
-													 "" v))
-												     ""))
+							       ((:set-value tbl-model)
+								(comparable-as-name (.getKey s))
+								(if data
+								  (let [v (.getValue data)]
+								    (if (isNan v)
+								      "" v))
+								  ""))
 							       
 
 							     )))))))
@@ -703,8 +710,11 @@
     (let [show-column (.getColumn (.getColumnModel table) 1)]
       (.setCellEditor show-column (DefaultCellEditor. (JCheckBox.))))
     
- ;(ChartUtilities/applyCurrentTheme chart)				  
+					;(ChartUtilities/applyCurrentTheme chart)
+   
     {
+     :name-as-comparable name-as-comparable
+     :comparable-as-name comparable-as-name 
      :data (atom {})
      :panel panel
      :table-model tbl-model

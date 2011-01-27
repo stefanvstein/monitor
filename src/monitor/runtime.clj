@@ -243,7 +243,7 @@
 			     trace  (doto (Trace2DLtdReplacing. 1000))
 			     visible-fn (fn ([_] (.isVisible trace))
 					  ([_ visible] (.setVisible trace visible)))
-			     row (do ((:add-to-table contents) %1 color %2 visible-fn)
+			     row (do ((:add-to-table contents) %1 color visible-fn)
 				     (- (.getRowCount table-model) 1))]
 			 (.setColor trace color)
 			 (.addTrace (:chart contents) trace)
@@ -252,13 +252,12 @@
     ;(println watched-names)
 					;   (println (str (count (.getTraces (:chart contents))) "traces"))
    (dorun (map (fn [a-name] 
-		 (let [unique-name a-name ;(str (merge (sorted-map) a-name))
-		       trace-row (do
-				   (if-let [trace-row (get @name-trace-rows unique-name)]
+		 (let [trace-row (do
+				   (if-let [trace-row (get @name-trace-rows a-name)]
 				     trace-row
-				     (let [trace-row (new-trace-row a-name unique-name)]
+				     (let [trace-row (new-trace-row a-name)]
 				       (swap! name-trace-rows (fn [current] 
-							       (assoc current unique-name trace-row)))
+							       (assoc current a-name trace-row)))
 				       trace-row)))
 		       trace (first trace-row)
 		       ;data (with-nans (get-data-for a-name))]

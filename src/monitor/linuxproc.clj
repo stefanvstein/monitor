@@ -73,11 +73,11 @@
 				  (let [lv (get @last-values (key e))
 					cv (val e)]
 				    (assoc r (key e)
-					   {"Received kB/s" (* 1024.0 (calculate (:received-bytes lv) (:received-bytes cv) seconds))
+					   {"Received kB/s" (/ (calculate (:received-bytes lv) (:received-bytes cv) seconds) 1024.0)
 					    "Received packets/s" (calculate (:received-packets lv) (:received-packets cv) seconds)
 					    "Receive errors/s" (calculate (:receive-errors lv) (:receive-errors cv) seconds)
 					    "Receive drops/s" (calculate (:receive-drops lv) (:receive-drops cv) seconds)
-					    "Sent kB/s" (* 1024.0 (calculate (:sent-bytes lv) (:sent-bytes cv) seconds))
+					    "Sent kB/s" (/ (calculate (:sent-bytes lv) (:sent-bytes cv) seconds) 1024.0)
 					    "Sent packets/s" (calculate (:sent-packets lv) (:sent-packets cv) seconds)
 					    "Send errors/s" (calculate (:send-errors lv) (:send-errors cv) seconds)
 					    "Send drops/s" (calculate (:send-drops lv) (:send-drops cv) seconds)
