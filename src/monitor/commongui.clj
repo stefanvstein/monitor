@@ -1,8 +1,8 @@
 (ns monitor.commongui
   (:use (monitor calculations))
   (:use [clojure.contrib import-static])
-  (:import (javax.swing.table AbstractTableModel))
-  (:import (java.util Date))
+  (:import (javax.swing.table AbstractTableModel TableRowSorter))
+  (:import (java.util Date Comparator))
   (:import (java.text DecimalFormat))
   (:import (java.awt Color))
   (:import (java.awt.event ActionListener))
@@ -70,8 +70,10 @@
 		   "Change/Minute" (fn [e] (sliding-per- e MINUTE MINUTE))
 		   "Change/Hour" (fn [e] (sliding-per- e HOUR HOUR))
 		   (throw (IllegalArgumentException. (str func " not yet implemented"))))]
-       (if (not= func "Raw") 
-	 (into (sorted-map) (fun data))
+       (if (not= func "Raw")
+	 (do
+	   ;(println (first data))
+	 (into (sorted-map) (fun data)))
 	 data)))
 
 (defn get-data 
@@ -80,11 +82,14 @@
 			    (map #(name (first %)) (partition 2 names)) 
 			    (map #(second %) (partition 2 names)))
 	     data (.rawData (server) from to (java.util.ArrayList. stringed-names))]
-	 (reduce (fn [result a-data] 
-		   (assoc result
-		     (names-as-keyworded (key a-data))
-		     (transform (val a-data) func-string))) 
-		{} data)))
+	 (if (seq data)
+	   (reduce (fn [result a-data]
+					;(println a-data)
+		     (assoc result
+		       (names-as-keyworded (key a-data))
+		       (transform (val a-data) func-string))) 
+		   {} data)
+	   {})))
   ([names func-string  server]
      (try
        (let [stringed-names-in-hashmaps (reduce 
@@ -121,18 +126,19 @@
 		(getColumnClass [column] (condp = column
 					     0 Color
 					     1 Boolean
+					     2 Number
 					     Object))
 		(isCellEditable [row column] (= column 1))
 		(setValueAt [value row column]
 			    (if (= column 1)
 			      ((:visible (get @rows row)) (:name (get @rows row)) value)
 			      (throw (IllegalStateException.)))))
-	add-row (fn [data color name visible-fn]
+	add-row (fn [data color data-as-comparable visible-fn] ;data-as-comparable is needed by freechart, and should hence not be here. Use a map in analysis instead, where data is key.
 ;		  (println "Adding-row" name)
 		  (let [fake-visible-flag (atom true)
 			fake-visible-fn (fn ([name]  @fake-visible-flag)
 					  ([name value]  (reset! fake-visible-flag value)))
-			internal-data {:data data :color color :name name :visible (if visible-fn
+			internal-data {:data data :color color :name data-as-comparable :visible (if visible-fn
 										     visible-fn
 										     fake-visible-fn)}] 
 		    (when-not (some #(= (:name internal-data) (:name %)) @rows)
@@ -154,11 +160,7 @@
 		     (dotimes [row-number (count @rows)]
 		       (recolor-graph-fn row-number (:color (get @rows row-number)))))
 	set-value (fn [name value]
-		    (let [v (if (or (instance? Double value) (instance? Float value))
-			      (.format (DecimalFormat. "###################0.#####") value)
-			      (if (integer? value)
-				(String/format "%d" (into-array [value]))
-				value))]
+		    (let [v value]
 		    (swap! rows (fn [rows]
 				  (into [] (map (fn [d]
 						  (if (= (:name d) name)
@@ -257,3 +259,22 @@
 				 
 		      
     (with-nans (without-nans data))))
+
+(defn create-row-sorter-with-Number-at [model n]
+  (proxy [TableRowSorter] [model]
+    (modelStructureChanged []
+			   (proxy-super modelStructureChanged)
+			   (proxy-super
+			    setComparator n (proxy [Comparator] []
+					      (compare [^Number a ^Number b]
+						       (cond
+							(and (instance? Number a)
+							     (instance? Number b))  (let [r (- a b)]
+										      (cond
+										       (< 0 r) 1
+										       (> 0 r) -1
+										       :else 0))
+							     
+							     (instance? Number a) 1
+							     (instance? Number b) -1
+							     :else 0)))))))

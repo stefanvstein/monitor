@@ -1,15 +1,17 @@
 (ns monitor.runtime
   (:use (monitor commongui))
   (:use (clojure set))
+  (:import (java.util Comparator))
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
 			DefaultComboBoxModel GroupLayout GroupLayout$Alignment JPopupMenu
 			BorderFactory))
-  (:import (javax.swing.table TableCellRenderer AbstractTableModel))
+  (:import (javax.swing.table TableCellRenderer AbstractTableModel TableRowSorter))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
 		     GridBagLayout GridBagConstraints Insets))
   (:import (java.awt.event WindowAdapter ActionListener MouseAdapter))
+  (:import (java.text DecimalFormat))
   (:import (info.monitorenter.gui.chart Chart2D IAxisLabelFormatter TracePoint2D))
   (:import (info.monitorenter.gui.chart.labelformatters LabelFormatterDate LabelFormatterNumber))
   (:import (info.monitorenter.gui.chart.traces Trace2DLtdReplacing))
@@ -158,17 +160,42 @@
 							     (.setOpaque true)
 							     (.setBackground color)
 							     ))))
+						       	 (.setDefaultRenderer Number (proxy [TableCellRenderer] []
+							    (getTableCellRendererComponent 
+							   [table value selected focus row column]
+							   (doto (JLabel.)
+							     (.setHorizontalAlignment JLabel/RIGHT)
+							     (.setText (if (instance? Number value)
+									 (let [d (DecimalFormat. "#,###.###")]
+									   (.setDecimalFormatSymbols d (doto (.getDecimalFormatSymbols d)
+													 (.setDecimalSeparator  \.)
+													 (.setGroupingSeparator \ )))
+									   (. d format value))
+									 value))))))
 						       (.setModel (:model tbl-model))
 						       (.setCellSelectionEnabled false)
 						       (.setName "table")
 						       (.addMouseListener (proxy [MouseAdapter] []
 									    (mousePressed [event]
-											  (when (.isPopupTrigger event)
-											    (popup event)))
+											  (if (.isPopupTrigger event)
+											    (popup event)
+											    #_(do (println @name-trace-row)
+												(println tbl-model))))
 									    (mouseReleased [event]
 											   (when (.isPopupTrigger event)
 											     (popup event)))))
-						       (.setAutoCreateRowSorter true)))))
+
+						       (.addMouseMotionListener  (proxy [MouseAdapter] []
+									    (mouseMoved [event]
+											
+											(let [row (.convertRowIndexToModel table (.rowAtPoint table
+																	      (Point. (.getX event)
+																		      (.getY event))))]
+											  #_(println "Row:" row)))
+									    (mouseExited [event])))
+				;		       (.setAutoCreateRowSorter true)
+						       (.setRowSorter (create-row-sorter-with-Number-at (:model tbl-model) 2))
+						       ))))
 	      (.setTopComponent chart ))))
 (let [r
     {:panel panel 

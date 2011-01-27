@@ -8,14 +8,14 @@
 			DefaultComboBoxModel GroupLayout BoxLayout GroupLayout$Alignment JPopupMenu
 			BorderFactory JSpinner$DateEditor  DefaultCellEditor Box))
 
-  (:import (javax.swing.table TableCellRenderer AbstractTableModel))
+  (:import (javax.swing.table TableCellRenderer AbstractTableModel TableRowSorter))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
 		     GridBagLayout GridBagConstraints Insets BasicStroke ))
   (:import (java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter ItemEvent ItemListener))
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
-  (:import (java.util Calendar Date))
-  (:import (java.text SimpleDateFormat))
+  (:import (java.util Calendar Date Comparator))
+  (:import (java.text SimpleDateFormat DecimalFormat))
   (:import (java.beans PropertyChangeListener))
   (:import (org.jfree.chart.axis NumberAxis))
   (:import (org.jfree.chart.event ChartProgressEvent ChartProgressListener RendererChangeEvent))
@@ -656,6 +656,18 @@
 							     (.setOpaque true)
 							     (.setBackground color)
 							     ))))
+							 (.setDefaultRenderer Number (proxy [TableCellRenderer] []
+							    (getTableCellRendererComponent 
+							   [table value selected focus row column]
+							   (doto (JLabel.)
+							     (.setHorizontalAlignment JLabel/RIGHT)
+							     (.setText (if (instance? Number value)
+									 (let [d (DecimalFormat. "#,###.###")]
+									   (.setDecimalFormatSymbols d (doto (.getDecimalFormatSymbols d)
+													 (.setDecimalSeparator  \.)
+													 (.setGroupingSeparator \ )))
+									   (. d format value))
+									 value))))))
 									 
 						       (.setModel (:model tbl-model))
 						       (.setCellSelectionEnabled false)
@@ -663,9 +675,12 @@
 						      
 						       (.addMouseListener mouse-table-adapter)
 						       (.addMouseMotionListener mouse-table-adapter)
-						       (.setAutoCreateRowSorter true)))))
+					;						       (.setAutoCreateRowSorter false)
+						      ;modelStructureChanged
+						       (.setRowSorter (create-row-sorter-with-Number-at (:model tbl-model) 2))
+							))))
 	      (.setTopComponent (let [chart-panel (ChartPanel. chart)]
-				       
+				  
 				  (doto chart-panel
 				  (.addComponentListener (proxy [ComponentAdapter] []
 							   (componentResized [e] 
@@ -682,6 +697,9 @@
 										(.fireChartChanged (.getChart c))
 										))
 									     )))))))) BorderLayout/CENTER))
+;     (let [d (.getComparator (.getRowSorter table) 2)]
+;					      (println d)
+;					      (println (.compare d 3 2)))
     (let [show-column (.getColumn (.getColumnModel table) 1)]
       (.setCellEditor show-column (DefaultCellEditor. (JCheckBox.))))
     

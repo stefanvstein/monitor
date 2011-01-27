@@ -97,22 +97,30 @@
 (defn- name-for-index [day index]
   (get (:by-index (get-day day)) index))
 
-(defn- save-index [days day]
-  (when @dayindex-db
-    (when-let [current (get days day)]
-      (let [failed (atom true)
-	    retries (atom 0)]
-	(while (and @failed (> 500 @retries))
-	  (try
-	    (db-put @dayindex-db day (:by-index current))
-	    (reset! failed false)
-	    (catch Exception e
-	      (if (some #(instance? LockConflictException %) (causes e))
-		(do (swap! retries (fn [c] (inc c)))
-		    (println (java.util.Date.) " deadlock in save-index")
-		    (try (Thread/sleep (rand-int 100))
-			 (catch Exception e)))
-		(throw e)))))))))
+(let [queue (atom [])]
+  (defn- save-index [days day]
+    (when @dayindex-db
+      (swap! queue conj day)
+      (locking save-index
+	(when (= day (first @queue))
+	  (swap! queue (fn swap-queue [queue]
+			 (drop
+			  (count (take-while #(= day %) queue))
+			  queue)))
+	  (when-let [current (get @days day)]
+	    (let [failed (atom true)
+		  retries (atom 0)]
+	      (while (and @failed (> 500 @retries))
+		(try
+		  (db-put @dayindex-db day (:by-index current))
+		  (reset! failed false)
+		  (catch Exception e
+		    (if (some #(instance? LockConflictException %) (causes e))
+		      (do (swap! retries (fn [c] (inc c)))
+			  (println (java.util.Date.) " deadlock in save-index")
+			  (try (Thread/sleep (rand-int 100))
+			       (catch Exception e)))
+		      (throw e))))))))))))
 
 (defn- index-for-name [day name]
   (let [the-day (get-day day)]
@@ -131,7 +139,7 @@
 				 by-index (assoc (:by-index the-day) index name)]
 			     (assoc cd day {:by-name by-name :by-index by-index :next-index next-index})))
 			 (assoc cd day {:by-name {name 0} :by-index {0 name} :next-index 1}))))]
-	  (save-index new-days day)
+	  (save-index current-day-indexes day)
 	  (get (:by-name (get new-days day)) name))))))
 
 

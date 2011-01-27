@@ -233,7 +233,8 @@
 (defn- add-memory-usage
   [pid the-time]
   (let [memoryusage (remote-memory)
-	heap ^java.lang.management.MemoryUsage (:heap memoryusage)]
+	heap ^java.lang.management.MemoryUsage (:heap memoryusage)
+	non-heap ^java.lang.management.MemoryUsage (:non-heap memoryusage)]
 		 (*add* {:host (remote-hostname)
 			    :jvm (vmname)
 			    :pid pid
@@ -251,13 +252,13 @@
 			    :pid pid
 			    :category "Memory"
 			    :counter "Non-Heap committed"}
-			   the-time (.getCommitted heap))
+			   the-time (.getCommitted non-heap))
 		 (*add* {:host (remote-hostname)
 			    :jvm (vmname)
 			    :pid pid
 			    :category "Memory"
 			    :counter "Non-Heap used"}
-			   the-time (.getUsed heap))))
+			   the-time (.getUsed non-heap))))
 
 (defn- jmx-java6-impl
   ([stop-fn threads?]

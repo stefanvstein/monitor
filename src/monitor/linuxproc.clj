@@ -73,11 +73,11 @@
 				  (let [lv (get @last-values (key e))
 					cv (val e)]
 				    (assoc r (key e)
-					   {"Received bytes/s" (calculate (:received-bytes lv) (:received-bytes cv) seconds)
+					   {"Received kB/s" (* 1024.0 (calculate (:received-bytes lv) (:received-bytes cv) seconds))
 					    "Received packets/s" (calculate (:received-packets lv) (:received-packets cv) seconds)
 					    "Receive errors/s" (calculate (:receive-errors lv) (:receive-errors cv) seconds)
 					    "Receive drops/s" (calculate (:receive-drops lv) (:receive-drops cv) seconds)
-					    "Sent bytes/s" (calculate (:sent-bytes lv) (:sent-bytes cv) seconds)
+					    "Sent kB/s" (* 1024.0 (calculate (:sent-bytes lv) (:sent-bytes cv) seconds))
 					    "Sent packets/s" (calculate (:sent-packets lv) (:sent-packets cv) seconds)
 					    "Send errors/s" (calculate (:send-errors lv) (:send-errors cv) seconds)
 					    "Send drops/s" (calculate (:send-drops lv) (:send-drops cv) seconds)
@@ -305,28 +305,28 @@
 			     {} (line-seq stream))]
 	  (let [result (atom 
 			(assoc {}
-			  "physical free" (:free-mem values)
-			  "physical used" (- (:total-mem values) (:free-mem values))
-			  "swap free" (:swap-free values)
-			  "swap in use" (- (:swap-total values) (:swap-free values) (:swap-cache values))
-			  "swap cached"  (:swap-cache values)
-			  "dirty" (:dirty values)
-			  "active" (:active values)
-			  "cache" (+ (:cached values) (:swap-cache values))
-			  "buffers" (:buffers values)))]
+			  "physical free" (* 1024 (:free-mem values))
+			  "physical used" (* 1024 (- (:total-mem values) (:free-mem values)))
+			  "swap free" (* 1024 (:swap-free values))
+			  "swap in use" (* 1024 (- (:swap-total values) (:swap-free values) (:swap-cache values)))
+			  "swap cached"  (* 1024 (:swap-cache values))
+			  "dirty" (* 1024 (:dirty values))
+			  "active" (* 1024 (:active values))
+			  "cache" (* 1024 (+ (:cached values) (:swap-cache values)))
+			  "buffers" (* 1024 (:buffers values))))]
 	    
 	    (when (:free-low values)
-	      (swap! result #(assoc %   "low free" (:free-low values)
-				    "low used" (- (:total-low values) (:free-low values)))))
+	      (swap! result #(assoc %   "low free" (* 1024 (:free-low values))
+				    "low used" (* 1024 (- (:total-low values) (:free-low values))))))
 	    (when (:inactive values)
-	      (swap! result #(assoc %   "inactive" (:inactive values))))
+	      (swap! result #(assoc %   "inactive" (* 1024 (:inactive values)))))
 	    
 	    (when (:writeback values)
-	      (swap! result #(assoc %  "dirty" (+ (:dirty values) (:writeback values)))))
+	      (swap! result #(assoc %  "dirty" (* 1024 (+ (:dirty values) (:writeback values))))))
 	    (when-let [slab (:slab values)]
-	      (swap! result #(assoc % "slab" (:slab values))))
+	      (swap! result #(assoc % "slab" (* 1024 (:slab values)))))
 	    (when-let [slab (:mapped values)]
-	      (swap! result #(assoc % "mapped" (:mapped values))))
+	      (swap! result #(assoc % "mapped" (* 1024 (:mapped values)))))
 	    
 	    (let [processes (assoc {}
 			      "process"
@@ -348,7 +348,7 @@
 							  (recur size shared private (+  resident (Long/parseLong (second (.split #"\s+" line)))) swapped (next lines))
 							  :else (recur size shared private resident swapped (next lines))
 							  )
-							 {"shared" shared "private" private "proportional" size "resident" resident "swapped" swapped}))]
+							 {"shared" (* 1024 shared) "private" (* 1024 private) "proportional" (* 1024 size) "resident" (* 1024 resident) "swapped" (* 1024 swapped)}))]
 					    (assoc r (Integer/parseInt (.getName pid-dir))
 						   data)))
 					  (catch IOException _
