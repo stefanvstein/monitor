@@ -111,7 +111,8 @@
   (let [rows (atom [])
 	columns (atom [:color :shown :value])
 	is-visible (fn is-visible [rows row]
-		     ((:visible (get rows row)) (:data (get rows row))))
+					;((:visible (get rows row)) (:data (get rows row))))
+		     ((:visible (get rows row))))
 		     
 	model (proxy [AbstractTableModel] []
 		(getRowCount [] (count @rows))
@@ -131,13 +132,13 @@
 		(isCellEditable [row column] (= column 1))
 		(setValueAt [value row column]
 			    (if (= column 1)
-			      ((:visible (get @rows row)) (:data (get @rows row)) value)
+			      ((:visible (get @rows row)) value)
 			      (throw (IllegalStateException.)))))
 	add-row (fn [data color visible-fn] ;data-as-comparable is needed by freechart, and should hence not be here. Use a map in analysis instead, where data is key.
 ;		  (println "Adding-row" name)
 		  (let [fake-visible-flag (atom true)
-			fake-visible-fn (fn ([name]  @fake-visible-flag)
-					  ([name value]  (reset! fake-visible-flag value)))
+			fake-visible-fn (fn ([]  @fake-visible-flag)
+					  ([value]  (reset! fake-visible-flag value)))
 			internal-data {:data data :color color  :visible (if visible-fn
 										     visible-fn
 										     fake-visible-fn)}] 

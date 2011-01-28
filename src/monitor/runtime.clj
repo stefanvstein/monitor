@@ -9,7 +9,7 @@
 			BorderFactory))
   (:import (javax.swing.table TableCellRenderer AbstractTableModel TableRowSorter))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
-		     GridBagLayout GridBagConstraints Insets))
+		     GridBagLayout GridBagConstraints Insets BasicStroke))
   (:import (java.awt.event WindowAdapter ActionListener MouseAdapter))
   (:import (java.text DecimalFormat))
   (:import (info.monitorenter.gui.chart Chart2D IAxisLabelFormatter TracePoint2D))
@@ -68,7 +68,8 @@
 (defn new-runtime-panel [frame]
   (let [panel (JPanel.)
 	connection-label (JLabel. " ")
-	chart (Chart2D.)
+	chart (doto (Chart2D.)
+		#_(.setUseAntialiasing true))
 	name-trace-row (atom {})
 	watched-names (atom #{})
 	table (JTable.)
@@ -183,16 +184,25 @@
 												(println tbl-model))))
 									    (mouseReleased [event]
 											   (when (.isPopupTrigger event)
-											     (popup event)))))
+											     (popup event)))
+									     (mouseExited [event]
+											  (doseq [trace (map first (vals @name-trace-row))]
+											    (when-not (= 2.0 (.getLineWidth (.getStroke trace)))
+											      (.setStroke trace (BasicStroke. 2.0)))))))
 
 						       (.addMouseMotionListener  (proxy [MouseAdapter] []
 									    (mouseMoved [event]
-											
 											(let [row (.convertRowIndexToModel table (.rowAtPoint table
 																	      (Point. (.getX event)
-																		      (.getY event))))]
-											  #_(println "Row:" row)))
-									    (mouseExited [event])))
+																		      (.getY event))))
+											      row-data (get @(:rows tbl-model) row)
+											      the-trace (first (get @name-trace-row (:data row-data)))]
+											  (doseq [trace (map first (vals @name-trace-row))]
+											    (if (= trace the-trace)
+											      (when-not (= 3.0 (.getLineWidth (.getStroke trace)))
+												(.setStroke trace (BasicStroke. 3.0)))
+											      (when-not (= 2.0 (.getLineWidth (.getStroke trace)))
+												(.setStroke trace (BasicStroke. 2.0)))))))))
 				;		       (.setAutoCreateRowSorter true)
 						       (.setRowSorter (create-row-sorter-with-Number-at (:model tbl-model) 2))
 						       ))))
@@ -240,9 +250,10 @@
 	columns-to-be-added (difference columns-in-watched current-columns)
 	add-columns #(dorun (map (fn [c] ((:add-column contents) c)) %))
 	new-trace-row #(let [color ((:colors contents))
-			     trace  (doto (Trace2DLtdReplacing. 1000))
-			     visible-fn (fn ([_] (.isVisible trace))
-					  ([_ visible] (.setVisible trace visible)))
+			     trace  (doto (Trace2DLtdReplacing. 1000)
+				      (.setStroke (BasicStroke. 2.0)))
+			     visible-fn (fn ([] (.isVisible trace))
+					  ([visible] (.setVisible trace visible)))
 			     row (do ((:add-to-table contents) %1 color visible-fn)
 				     (- (.getRowCount table-model) 1))]
 			 (.setColor trace color)

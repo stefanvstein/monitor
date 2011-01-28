@@ -470,6 +470,7 @@
     (.shutdown accept-executor)
 
     (loop [tim (Date.)]
+      (try
       (when re
 	(reset! pids-of-interest (interesting-pids re))
 	;(doseq [i @pids-of-interest]
@@ -489,7 +490,8 @@
 		    @sockets)))
 
       (term-sleep-until tim)
-
+      (catch Exception e
+	(.printStackTrace e)))
       (when-not (.isTerminated accept-executor)
 	(recur (Date. ^Long (+ (.getTime tim) (* 1000 frequency))))))))
     

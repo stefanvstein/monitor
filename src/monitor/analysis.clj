@@ -133,12 +133,11 @@
 				  (. serie setNotify false)
 				  (. time-series-coll addSeries serie)
 ;				  (println "Count" (.getSeriesCount graph))
-				  (let [visible-fn (fn ([_]
-							  
+				  (let [visible-fn (fn ([]
 							  (if-let [index (index-by-name time-series-coll identifier)]
 							    (.. chart (getPlot) (getRenderer) (getItemVisible index 0 ))
 							    false))
-						     ([_ visible]
+						     ([visible]
 							(when-let [index (index-by-name time-series-coll identifier)]
 							  (.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))
 							  )))]
