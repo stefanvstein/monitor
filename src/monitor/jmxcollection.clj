@@ -46,7 +46,7 @@
 									   :instance name
 									   :jvm (vmname)
 									   :host (remote-hostname)}
-									  (double (.getValue #^Attribute the-attribute))]))))
+									  (.getValue #^Attribute the-attribute)]))))
 
 				    "CollectionTime" (conj result (fn [attributes] 
 								     (when-let [the-attribute (some (fn [#^Attribute a](when (= "CollectionTime" (.getName a)) 
@@ -82,7 +82,7 @@
 														    :jvm (vmname)
 														    :host (remote-hostname)
 														    :section name}
-													    (double (.getUsed #^java.lang.management.MemoryUsage (val area))))) [] before-gc)
+													    (.getUsed #^java.lang.management.MemoryUsage (val area)))) [] before-gc)
 									       committed-after (reduce (fn [result area]
 													 (conj result {:category "GarbageCollector"
 														       :counter "Committed After Last"
@@ -90,7 +90,7 @@
 														       :jvm (vmname)
 														       :host (remote-hostname)
 														       :section name}
-													       (/ (.getCommitted #^java.lang.management.MemoryUsage (val area)) 1.0))) [] after-gc)
+													        (.getCommitted #^java.lang.management.MemoryUsage (val area)))) [] after-gc)
 									       max-after (reduce (fn [result area]
 												   (conj result {:category "GarbageCollector"
 														 :counter "Max After Last"
@@ -98,7 +98,7 @@
 														 :jvm (vmname)
 														 :host (remote-hostname)
 														 :section name}
-													 (double (.getMax #^java.lang.management.MemoryUsage (val area))))) [] after-gc)
+													 (.getMax #^java.lang.management.MemoryUsage (val area)))) [] after-gc)
 									       
 									       usage-after (reduce (fn [result area]
 												     (conj result {:category "GarbageCollector"
@@ -107,7 +107,7 @@
 														   :jvm (vmname)
 														   :host (remote-hostname)
 														   :section name}
-													   (double (.getUsed #^java.lang.management.MemoryUsage (val area))))) [] after-gc)]
+													   (.getUsed #^java.lang.management.MemoryUsage (val area)))) [] after-gc)]
 									   (swap! *last-last-gc-info* assoc timestamp [usage-before usage-after committed-after max-after])
 									   (concat result usage-before usage-after committed-after max-after))
 									 )))))
@@ -164,7 +164,7 @@
 								 :instance name
 								 :jvm (vmname)
 								 :host (remote-hostname)}
-								(double (.getUsed (MemoryUsage/from (.getValue the-attribute))))])))) 
+								(.getUsed (MemoryUsage/from (.getValue the-attribute)))])))) 
 				    
 				    result))
 				[] attributes)]
@@ -235,43 +235,77 @@
   (let [memoryusage (remote-memory)
 	heap ^java.lang.management.MemoryUsage (:heap memoryusage)
 	non-heap ^java.lang.management.MemoryUsage (:non-heap memoryusage)]
-		 (*add* {:host (remote-hostname)
-			    :jvm (vmname)
-			    :pid pid
-			    :category "Memory"
-			    :counter "Heap used"}
-			   the-time (.getUsed heap))
-		 (*add* {:host (remote-hostname)
-			    :jvm (vmname)
-			    :pid pid
-			    :category "Memory"
-			    :counter "Heap committed"}
-			   the-time (.getCommitted heap))
-		 (*add* {:host (remote-hostname)
-			    :jvm (vmname)
-			    :pid pid
-			    :category "Memory"
-			    :counter "Non-Heap committed"}
-			   the-time (.getCommitted non-heap))
-		 (*add* {:host (remote-hostname)
-			    :jvm (vmname)
-			    :pid pid
-			    :category "Memory"
-			    :counter "Non-Heap used"}
-			   the-time (.getUsed non-heap))))
+    (*add* {:host (remote-hostname)
+	    :jvm (vmname)
+	    :pid pid
+	    :category "Memory"
+	    :counter "Heap used"}
+	   the-time (.getUsed heap))
+    (*add* {:host (remote-hostname)
+	    :jvm (vmname)
+	    :pid pid
+	    :category "Memory"
+	    :counter "Heap committed"}
+	   the-time (.getCommitted heap))
+    (*add* {:host (remote-hostname)
+	    :jvm (vmname)
+	    :pid pid
+	    :category "Memory"
+	    :counter "% Heap committed"}
+	   the-time (* 100.0 (/ (.getCommitted heap) (.getMax heap))))
+    (*add* {:host (remote-hostname)
+	    :jvm (vmname)
+	    :pid pid
+	    :category "Memory"
+	    :counter "% Heap used"}
+	   the-time  (* 100.0 (/ (.getUsed heap) (.getMax heap))))
+    (*add* {:host (remote-hostname)
+	    :jvm (vmname)
+	    :pid pid
+	    :category "Memory"
+	    :counter "Non-Heap committed"}
+	   the-time (.getCommitted non-heap))
+    (*add* {:host (remote-hostname)
+	    :jvm (vmname)
+	    :pid pid
+	    :category "Memory"
+	    :counter "Non-Heap used"}
+	   the-time (.getUsed non-heap))))
 
 (defn- jmx-java6-impl
   ([stop-fn threads?]
   (let [collector-fns (collector-keys (mbean-server))
 	mem-fns (memory-fns (mbean-server))
 	thread-beans (thread-bean (mbean-server))
-	pid (remote-pid)]
+	pid (remote-pid)
+	percent-of-heap (fn percent-of-heap [col-vals the-time]
+			  (doseq [per-heap (partition-by #(:instance (key %)) (sort-by #(:instance (key %)) col-vals))]
+			    (let [commited-and-max (sort-by #(:counter (key %))
+							    (filter #(and (= "Latest" (:section (key %)))
+									  (or (= "Max After Last" (:counter (key %)))
+									      (= "Committed After Last" (:counter (key %)))
+									      (= "Usage After Last" (:counter (key %)))))
+								    per-heap))]
+			      (when (= 3 (count commited-and-max))
+				(when-not  (some nil? (vals commited-and-max))
+				  (let [committed (val (first commited-and-max))
+					max (val (second commited-and-max))
+					usage (val (nth commited-and-max 2))]
+				    (when-not (or (zero? max) (zero? usage))
+				      (*add* (assoc (key (first commited-and-max)) :pid pid :counter "% Committed after Last")
+					     the-time
+					     (* 100.0 (/ committed max)))
+				      (*add* (assoc (key (first commited-and-max)) :pid pid :counter "% Usage after Last")
+					     the-time
+					     
+					     (* 100.0 (/ usage committed))))))))))]
     (while (not (stop-fn))
 	   (let [the-time (remote-time)]
-
-	     (dorun (map (fn [i]  
-			   (*add* (assoc (key i) :pid pid) the-time (val i))) 
-			 (collector-values collector-fns (mbean-server))))
+	     (let [cv (collector-values collector-fns (mbean-server))]
+	       (dorun (map (fn [i]  
+			     (*add* (assoc (key i) :pid pid) the-time (val i))) 
+			   cv))
+	       (percent-of-heap cv the-time))
 	     (dorun (map (fn [i]  
 			   (*add* (assoc (key i) :pid pid) the-time (val i))) 
 			 (memory-values mem-fns (mbean-server))))

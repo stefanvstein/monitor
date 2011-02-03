@@ -70,27 +70,17 @@
 	connection-label (JLabel. " ")
 	chart (doto (Chart2D.)
 		#_(.setUseAntialiasing true))
-	name-trace-row (atom {})
+	name-trace (ref {})
 	watched-names (atom #{})
 	table (JTable.)
 	tbl-model (create-table-model
-		   (fn [row-num]
-;		     (println (str "Name-trace-row: " (class (key (first @name-trace-row)))))
-;		     (println (str "watched names : " (class (first @watched-names))))
-;		     (println (=  (key (first @name-trace-row)) (first @watched-names)))
-		       
-		     (swap! name-trace-row (fn [current]
-					     (reduce (fn [r i]
-						       (let [row (second (val i))]
-							 (if (= row row-num)
-							   (do
-							     (.removeTrace chart (first (val i)))
-							     (swap! watched-names (fn [c] (disj c (key i))))
-							     (dissoc r (key i)))
-							   (if (< row-num row)
-							     (assoc r (key i) [(first (val i)) (dec (second (val i)))])
-							     r)))) current current))))
-		   (fn [row-num color]))
+		   (fn remove-graph [name]
+		     (let [trace (get @name-trace name)]
+			(dosync
+			 (alter name-trace dissoc name))
+			(.removeTrace chart trace)
+			(swap! watched-names disj name)))
+		   (fn recolor [row-num color]))
 	current-row (atom nil)
 	popupMenu (doto (JPopupMenu.)
 		    (.add ( doto (JMenuItem. "Delete")
@@ -107,17 +97,14 @@
 
 	axis-bottom (AxisLinear.)]
     (.addWindowListener frame (proxy [WindowAdapter] []
-			       (windowClosed [e] ;(println "Window Closed")
-					     ;(println (count @runtimes))
+			       (windowClosed [e] 
 					     (swap! runtimes (fn [current]
 							       (let [window (.getWindow e)]
 								 (reduce (fn [r i]
 									   (if (= window (SwingUtilities/windowForComponent (:panel i)))
 									     (disj r i)
 									     r)
-									   ) current current))))
-					     ;(println (count @runtimes))
-					     )))
+									   ) current current)))))))
     (doto chart
       (.setMinimumSize (Dimension. 100 100))
       (.setPreferredSize (Dimension. 300 200))
@@ -179,14 +166,12 @@
 						       (.addMouseListener (proxy [MouseAdapter] []
 									    (mousePressed [event]
 											  (if (.isPopupTrigger event)
-											    (popup event)
-											    #_(do (println @name-trace-row)
-												(println tbl-model))))
+											    (popup event)))
 									    (mouseReleased [event]
 											   (when (.isPopupTrigger event)
 											     (popup event)))
 									     (mouseExited [event]
-											  (doseq [trace (map first (vals @name-trace-row))]
+											  (doseq [trace (vals @name-trace)]
 											    (when-not (= 2.0 (.getLineWidth (.getStroke trace)))
 											      (.setStroke trace (BasicStroke. 2.0)))))))
 
@@ -196,8 +181,8 @@
 																	      (Point. (.getX event)
 																		      (.getY event))))
 											      row-data (get @(:rows tbl-model) row)
-											      the-trace (first (get @name-trace-row (:data row-data)))]
-											  (doseq [trace (map first (vals @name-trace-row))]
+											      the-trace (get @name-trace (:data row-data))]
+											  (doseq [trace (vals @name-trace)]
 											    (if (= trace the-trace)
 											      (when-not (= 3.0 (.getLineWidth (.getStroke trace)))
 												(.setStroke trace (BasicStroke. 3.0)))
@@ -211,7 +196,7 @@
     {:panel panel 
      :chart chart
      :connection-label connection-label
-     :name-trace-row name-trace-row 
+     :name-trace name-trace 
 					; :table-model (:model tbl-model)
      :table-model tbl-model
      :add-to-table (:add-row tbl-model)
@@ -241,15 +226,17 @@
 			  (if (< i (.getColumnCount table-model))
 			    (recur (inc i) (conj r (keyword (.getColumnName table-model i))))
 			    r))
-	name-trace-rows (:name-trace-row contents)
+	name-trace (:name-trace contents)
 	chart (:chart contents)
 	watched-names (deref (:watched-names contents))
 	columns-in-watched (reduce (fn [r watched-name]
 				     (reduce (fn [r a-name] (conj r (key a-name))) r watched-name))
 				   #{:color} watched-names)
 	columns-to-be-added (difference columns-in-watched current-columns)
-	add-columns #(dorun (map (fn [c] ((:add-column contents) c)) %))
-	new-trace-row #(let [color ((:colors contents))
+	add-columns #(doseq [c %]
+			    ((:add-column contents) c))
+
+	new-trace #(let [color ((:colors contents))
 			     trace  (doto (Trace2DLtdReplacing. 1000)
 				      (.setStroke (BasicStroke. 2.0)))
 			     visible-fn (fn ([] (.isVisible trace))
@@ -258,33 +245,31 @@
 				     (- (.getRowCount table-model) 1))]
 			 (.setColor trace color)
 			 (.addTrace (:chart contents) trace)
-			 [trace row])]
+			 trace)]
     (add-columns columns-to-be-added)
     ;(println watched-names)
 					;   (println (str (count (.getTraces (:chart contents))) "traces"))
-   (dorun (map (fn [a-name] 
-		 (let [trace-row (do
-				   (if-let [trace-row (get @name-trace-rows a-name)]
-				     trace-row
-				     (let [trace-row (new-trace-row a-name)]
-				       (swap! name-trace-rows (fn [current] 
-							       (assoc current a-name trace-row)))
-				       trace-row)))
-		       trace (first trace-row)
-		       ;data (with-nans (get-data-for a-name))]
-		       data (get-data-for a-name)]
-		   ;(println data)
-		   (if (empty? data)
-		     (do
-		       (when-let [row  (second (get @name-trace-rows a-name))]
-			 ((:remove-row contents) row)))
-		     (do
-		       (.removeAllPoints trace)
-		       (doseq [d  (simple-data-with-doubles data)]
-			 (.addPoint trace (TracePoint2D. (.getTime (key d)) (val d))))
-		       ((:set-value tbl-modl) a-name (val (last data))))
-		   ))) 
-	       watched-names))))
+    (doseq [a-name watched-names]
+      
+      (let [trace (dosync
+			(if-let [trace (get @name-trace a-name)]
+			  trace
+			  (let [trace (new-trace a-name)]
+			    (alter name-trace assoc a-name trace)
+			    trace)))
+	   
+					;data (with-nans (get-data-for a-name))]
+	    data (get-data-for a-name)]
+					;(println data)
+	(if (empty? data)
+	      ((:remove-row contents) a-name);)
+	  (do
+	    (.removeAllPoints trace)
+	    (doseq [d  (simple-data-with-doubles data)]
+	      (.addPoint trace (TracePoint2D. (.getTime (key d)) (val d))))
+	    ((:set-value tbl-modl) a-name (val (last data))))
+	  )))))
+	      
 
 (defn runtime-add-dialog [contents server]
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
@@ -345,7 +330,7 @@
 					      (if-let [a-value ((key a-name) i)]
 						(conj toadd a-value)
 						toadd))
-					    #{} (val a-name))]
+					    (sorted-set) (val a-name))]
 			  (dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
 			(. combo setName field-name)
 			
@@ -376,8 +361,9 @@
     dialog))
 
 (defn update-runtime-data []
-  (swap! runtime-names-of-interest (fn [_] #{}))
-  (dorun (map #(update-table-and-graphs %) @runtimes))
+  (reset! runtime-names-of-interest #{})
+  (doseq [rt  @runtimes]
+    (update-table-and-graphs rt))
   (swap! all-raw-names (fn [current]
 			     (reduce (fn [r i]
 				       (conj r i)) 

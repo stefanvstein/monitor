@@ -72,7 +72,7 @@
   (when @*live-data*
     (dosync
      (alter *live-data* remove-from-each-while (fn [#^Date i] (< (.getTime i) (.getTime timestamp))))
-     (alter *live-data* dissoc empty-names @*live-data*))))
+     (alter *live-data* (fn [ld] (apply dissoc ld  (empty-names ld)))))))
 
 
 

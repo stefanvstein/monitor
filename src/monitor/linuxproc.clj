@@ -115,9 +115,11 @@
 	      (if-let [ldisk @last-disk]
 		(let [seconds (/ (- now @last-time) 1000.0)
 		      change (fn change [new-value old-value]
+			       (if (or (nil? new-value) (nil? old-value))
+				 0
 			       (if (< new-value old-value)
 				 (- (+ new-value max-value) old-value)
-				 (- new-value old-value)))]
+				 (- new-value old-value))))]
 		  (reduce (fn [r e]
 			    (assoc r (key e) (assoc {}
 					       "written kB/s" (/ (change (:written (val e)) (:written (get ldisk (key e)))) seconds)

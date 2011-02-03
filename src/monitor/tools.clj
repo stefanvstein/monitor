@@ -2,6 +2,12 @@
   (:import (java.util Date Calendar))
   (:use clojure.test))
 
+(def *stime* true)
+(defmacro stime [name & expr]
+  `(let [start# (when *stime* (. System (nanoTime)))
+	 ret# (do ~@expr)]
+     (when *stime* (println (str (print-str "Elapsed time \"")  ~name (print-str "\": ")  (/ (double (- (. System (nanoTime)) start#)) 1000000.0) " msecs")))
+     ret#))
 
 (defn causes ([e] 
   (take-while #(not (nil? %)) 

@@ -48,7 +48,7 @@
 			 (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
 	       (sorted-map) names))))
 
-(defn- transform
+(defn transform
   [data func]
      (let [fun (condp = func
 		   "Raw" (fn [e] e)
@@ -77,7 +77,7 @@
 	 data)))
 
 (defn get-data 
-  ([from to names func-string server]
+  ([from to names server]
        (let [stringed-names (interleave 
 			    (map #(name (first %)) (partition 2 names)) 
 			    (map #(second %) (partition 2 names)))
@@ -87,7 +87,8 @@
 					;(println a-data)
 		     (assoc result
 		       (names-as-keyworded (key a-data))
-		       (transform (val a-data) func-string))) 
+					;(transform (val a-data) func-string)))
+		       (val a-data))) 
 		   {} data)
 	   {})))
   ([names func-string  server]
@@ -134,6 +135,13 @@
 			    (if (= column 1)
 			      ((:visible (get @rows row)) value)
 			      (throw (IllegalStateException.)))))
+	num-of-name (fn num-of-name [name]
+		      (let [internal-row (some #(when (= (:data %) name)
+							       %)
+							       @rows)]
+			(let [n (.indexOf @rows internal-row)]
+			  (when (<= 0 n)
+			    n))))
 	add-row (fn [data color visible-fn] ;data-as-comparable is needed by freechart, and should hence not be here. Use a map in analysis instead, where data is key.
 ;		  (println "Adding-row" name)
 		  (let [fake-visible-flag (atom true)
@@ -149,17 +157,25 @@
 		     (when-not (some #(= k-word %) @columns)
 		       (swap! columns (fn [cols] (conj cols k-word)))
 		       (.fireTableStructureChanged model)))
-	remove-row (fn [row-num]
-		     (remove-graph-fn row-num)
-		     (swap! rows (fn [rows] 
-				   (let [begining (subvec rows 0 row-num )
-					 end (subvec rows (+ 1 row-num) (count rows))]
-				     (if (empty? end)
-				       begining
-				       (apply conj begining end)))))
-		     (.fireTableDataChanged model)
-		     (dotimes [row-number (count @rows)]
-		       (recolor-graph-fn row-number (:color (get @rows row-number)))))
+
+	remove-row (fn [row]
+		     (let [row (if (integer? row)
+				 (:data (get @rows row))
+				 row)
+			   row-num (num-of-name row)]
+
+		       (when (and row row-num)
+			 (remove-graph-fn row)
+			 (swap! rows (fn [rows] 
+				       (let [begining (subvec rows 0 row-num )
+					     end (subvec rows (+ 1 row-num) (count rows))]
+					 (if (empty? end)
+					   begining
+					   (apply conj begining end)))))
+			 (.fireTableDataChanged model)
+			 (dotimes [row-number (count @rows)]
+			   (recolor-graph-fn row-number (:color (get @rows row-number)))))))
+	
 	set-value (fn [data value]
 		    (let [v value]
 		    (swap! rows (fn [rows]
@@ -264,7 +280,7 @@
 (defn create-row-sorter-with-Number-at [model n]
   (proxy [TableRowSorter] [model]
     (modelStructureChanged []
-			   (proxy-super modelStructureChanged)
+			   (proxy-super  modelStructureChanged)
 			   (proxy-super
 			    setComparator n (proxy [Comparator] []
 					      (compare [^Number a ^Number b]

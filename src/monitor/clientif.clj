@@ -7,7 +7,7 @@
   (:import (java.util HashMap TreeMap))
   (:use (clojure stacktrace test))
   (:use [clojure.contrib import-static])
-  (:use (monitor database calculations))
+  (:use (monitor database calculations tools))
   (:use cupboard.utils)
   (:use [clojure.contrib.logging :only [info error]]))
 
@@ -30,7 +30,7 @@
   (let [keyed-names (interleave 
 		     (map #(keyword (first %)) (partition 2 names)) 
 		     (map #(second %) (partition 2 names)))
-	fns-for-names (apply data-by from to keyed-names)
+	fns-for-names (stime "prepare read" (apply data-by from to keyed-names))
 	as-map (fn [fns-for-names]
 			  (let [result (java.util.HashMap.)]
 			    (doseq [fns-for-name fns-for-names]
@@ -40,7 +40,7 @@
 				(doseq [a-fn (second fns-for-name)]
 				  (a-fn #(.put values (first %) (second %))))))
 			    result))]
-    (as-map fns-for-names)))
+    (stime "read data" (as-map fns-for-names))))
 
 (defn raw-live-data [names]
   (let [keyworded-names (reduce (fn [r i] (conj r (names-as-keyworded i))) [] names)

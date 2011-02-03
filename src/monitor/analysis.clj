@@ -1,6 +1,7 @@
 (ns monitor.analysis
   (:use (clojure stacktrace pprint))
   (:use (monitor commongui tools mem))
+  (:use (clojure.contrib profile))
 
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JScrollPane JSplitPane JTable JCheckBox JLabel Box JDialog JComboBox
@@ -20,8 +21,11 @@
   (:import (org.jfree.chart.axis NumberAxis))
   (:import (org.jfree.chart.event ChartProgressEvent ChartProgressListener RendererChangeEvent))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities))
-  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond))
+  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond FixedMillisecond))
+  (:import (org.jfree.chart.renderer.xy SamplingXYLineRenderer StandardXYItemRenderer XYSplineRenderer))
   (:import (monitor SplitDateSpinners)))
+
+
 
 (defn- date-order [d1 d2]
   (if (< (.getTime d1) (.getTime d2))
@@ -48,7 +52,7 @@
 												    (if-let [a-value ((key a-name) i)]
 												      (conj toadd a-value)
 												      toadd))
-												  #{}
+												  (sorted-set)
 												  (val a-name)))))
 				    combo (doto (JComboBox. combo-model)
 					    (.setName field-name))]
@@ -102,9 +106,11 @@
 	nil))))
   
 
-					;(defn on-add-to-analysis [from to shift name-values all-names func-string graph colors chart add-to-table add-column statusbar server]
+
 (defn on-add-to-analysis [from to shift name-values all-names func-string
-			  {^TimeSeriesCollection time-series-coll :time-series
+			  { time-series-coll :time-series
+			   disable-col :disable-collection
+			   enable-col :enable-collection
 			   colors :colors
 			   ^JFreeChart chart  :chart
 			   add-to-table :add-to-table
@@ -115,23 +121,29 @@
 			   num-rendered :num-rendered
 			   name-as-comparable :name-as-comparable}
 			  server]
-  (let [stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
+
+  (let [collection-subscribers (atom [])
+	stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
 					;(dorun (map (fn [timeseries] (.setNotify timeseries false)) (. time-series-coll getSeries)))
+			    (disable-col)
 			    )
 	start-chart-notify (fn start-chart-notify []
 			     ;(dorun (map (fn [timeseries] (.setNotify timeseries true)) (. time-series-coll getSeries)))
-			     (.setNotify chart true))
+			     (.setNotify chart true)
+			     (enable-col))
 
 	shift-time (if (= 0 shift)
 		     (fn [a] a)
 		     (fn [a] (with-keys-shifted a (fn [d] d) (fn [#^Date d] (Date. (long (+ (.getTime d) shift)))))))
 		     
 	create-new-time-serie (fn [data-key]
+				(binding [*stime* false]
+				(stime "create-new-time-serie"
 				(let [identifier (name-as-comparable data-key)
 				      serie (TimeSeries. identifier)
 				      color (colors)]
 				  (. serie setNotify false)
-				  (. time-series-coll addSeries serie)
+				  (stime " addSerie" (. time-series-coll addSeries serie))
 ;				  (println "Count" (.getSeriesCount graph))
 				  (let [visible-fn (fn ([]
 							  (if-let [index (index-by-name time-series-coll identifier)]
@@ -140,14 +152,17 @@
 						     ([visible]
 							(when-let [index (index-by-name time-series-coll identifier)]
 							  (.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))
-							  )))]
-				    (.. chart 
-					(getPlot) (getRenderer) (setSeriesPaint (dec (count (.getSeries time-series-coll)))
-										color))
+							  )))
+					new-index (dec (count (.getSeries time-series-coll)))]
+				    (doto (.. chart 
+					      (getPlot) (getRenderer))
+				      (.setSeriesPaint new-index color);(Color. (.getRed color) (.getGreen color) (.getBlue color) 200))
+				      (.setSeriesStroke new-index (BasicStroke. 2.0)))
 				    
-				    (add-to-table data-key color visible-fn))
-				  (dorun (map (fn [i] (add-column i)) (keys data-key))) 
-				  serie))
+				    
+				    (stime " add-to-table" (add-to-table data-key color visible-fn))
+				  (stime " add-column" (dorun (map (fn [i] (add-column i)) (keys data-key)))) 
+				  serie)))))
 	remove-with-empty-cols-as-val (fn [data]
 					(let [r (into {} (filter #(seq (val %)) data))]
 					  (when (seq r)
@@ -155,22 +170,18 @@
 
 	updatechart (fn [data]
 		      (let [d (remove-with-empty-cols-as-val data)]
-			(if-not d
-			  (SwingUtilities/invokeLater
-			   #(.setText status-label (str "Rendering " (swap! num-rendered inc) " of " @num-to-render)))
+			(when d
 			  (swap! data-queue conj d))
 			(SwingUtilities/invokeLater
+			 
 			 (fn []
+			   #(.setText status-label (str "Rendering "))
+			   (stime "gui rendering"
 			   (stop-chart-notify)
 			   (try
 			     (let [datas (into [] (take 10 @data-queue))]
 			       (when-not (zero? (count datas))
-			     
 				 (swap! data-queue (fn [dq] (vec (drop (count datas) dq))))
-				 (let [u (swap! num-rendered (fn [d] (+ d (count datas) )))
-				       num @num-to-render]
-				   (.setText status-label (str "Rendering " u " of " num)))
-			     
 			   
 				 (doseq [data datas]
 				   (dorun (map (fn [data]
@@ -180,14 +191,14 @@
 								  (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
 								    (assoc dk :shifted (str (.format df from) " to " (.format df
 															      (Date. (long (+ (.getTime ^Date from) shift)))))))))
-						     make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
-					;						      data-values (make-double-values (val data))    ;???????
-						     data-values (val data) ; See above
+						     ;make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
+											      data-values (val data) #_(make-double-values (val data))    ;???????
+
 						     ^TimeSeries time-serie (if-let [serie (. time-series-coll getSeries (name-as-comparable data-key))]
 									      serie
 									      (create-new-time-serie data-key))
-						     data-from-serie (time-serie-to-sortedmap time-serie) ; use last-from-timeserie and keep the old in the time serie
-						     data-with-new-data (merge data-from-serie data-values)
+						     data-from-serie (binding [*stime* false] (stime "time-serie-to-sorted-map" (time-serie-to-sortedmap time-serie))) ; use last-from-timeserie and keep the old in the time serie
+						     data-with-new-data (binding [*stime* false] (stime "merge with new" (merge data-from-serie data-values)))
 						     nan-distance (condp = func-string
 								      "Raw" (* 30 1000)
 								      "Change/Second" (* 30 1000)
@@ -205,7 +216,7 @@
 								      "Mean/Day" (* 2 24 60 60 1000)
 								      "Min/Day" (* 2 24 60 60 1000)
 								      "Max/Day" (* 2 24 60 60 1000))
-						     data-with-nans (with-nans data-with-new-data nan-distance)
+						     data-with-nans (stime "with-nans" (with-nans data-with-new-data nan-distance))
 						     reduce-samples (fn reduce-samples [data] 
 								      (if (next data) 
 									(loop [s (next data), result data, previous (first data), was-equal false]
@@ -226,63 +237,54 @@
 						     reduced-samples data-with-nans
 						     
 						     temp-serie (doto (TimeSeries. "") (.setNotify false))
-						     new-serie (reduce (fn [^TimeSeries r i]
+						     new-serie (binding [*stime* false] (stime "fill serie" (reduce (fn [^TimeSeries r i]
 									 (.add r  (TimeSeriesDataItem. 
-										   (Millisecond. (key i)) 
+										   (FixedMillisecond. (key i)) ;Fixed is better than Millisecond
 										   ^Number (val i)))
 									 r)
-								       temp-serie reduced-samples)]
+								       temp-serie reduced-samples)))]
 						 
 						    
 						 (.clear time-serie)
-						 (.addAndOrUpdate time-serie new-serie)))
+						 (binding [*stime* false] (stime "addAndOrUpdate" (.addAndOrUpdate time-serie new-serie)))))
 					       data)))
 
 				  ))
 		       (catch Exception e
 			 (.printStackTrace e))
-		       (finally   (start-chart-notify)))))))]
+		       (finally   (stime "notify" (start-chart-notify))))))   )))]
     
     (future
+     
+      
       (try
 	(SwingUtilities/invokeLater (fn []
-					(.setText status-label "Retrieving...")))
-	(if (= "Raw" func-string)
-	  (let [days (full-days-between from to)]
-	    (swap! num-to-render (fn [d] (+ d (count days))))
-	    (dorun (map (fn [ e ]
-			  (updatechart (shift-time (get-data (first e)
-							     (second e)
-							     name-values
-							     func-string
-							     server))))
-			days)))
-		 
-	  (let [names-of-interest (let [sel-as-map (apply assoc {} name-values)]
-				    (reduce (fn [c a] 
-					      (let [s (select-keys a (keys sel-as-map))]
-						(if (= s sel-as-map)
-						  (conj c a)
-						  c)))
-					    [] all-names))]
-	    (swap! num-to-render (fn [d] (+ d (count names-of-interest))))
-	    (dorun (map (fn [e]
-			  (updatechart (shift-time (get-data from
-							     to
-							     (reduce (fn [v e]
-								       (conj v (key e) (val e))) [] e)
-							     func-string
-							     server))))
-		      
-			names-of-interest))))
-	
+				      (.setText status-label "Retrieving...")))
+	(try
+					;	(if (= "Raw" func-string)
+	(let [days (full-days-between from to)
+	      alldata (atom {})]
+	  (swap! num-to-render (fn [d] (+ d (count days))))
+	  
+	  (stime "retrieve and merge" (dorun (map (fn [ e ]
+			(swap! alldata (fn [a] (merge a (shift-time (get-data (first e)
+									      (second e)
+									      name-values
+					;func-string
+									      server))))))
+		      days)))
+	  (let [res (stime "transform" (reduce (fn [r e]
+			      (assoc r (key e) (transform (val e) func-string))) {} @alldata))]
+	    (updatechart res)))
+	(finally
 	(SwingUtilities/invokeLater (fn []
-				      (when (= @num-rendered @num-to-render)
+;				      (when (= @num-rendered @num-to-render)
 					(reset! num-rendered 0)
 					(reset! num-to-render 0)
-					(.setText status-label " "))))
+					(.setText status-label " ")))))
 	
 	(update-chart chart)
+	
 	(catch Exception e
 	  (.printStackTrace e))))))
 
@@ -485,6 +487,7 @@
 						      from (first dates-in-order)
 						      to (second dates-in-order)]
 						  (let [names (get-names from to server)]
+						   
 						    (swap! all-names (fn [_]
 								       (reduce (fn [r e]
 					;e är lista
@@ -534,18 +537,33 @@
 										     (.invalidateLayout layout p)))))))))
 
 	panel (JPanel.)
-	time-series (TimeSeriesCollection.)
+	enabled-collection-notify (atom true)
+		
+	time-series (proxy [TimeSeriesCollection] []
+		      (fireDatasetChanged []
+					  (when @enabled-collection-notify
+					    (proxy-super fireDatasetChanged))))
+		     
+	disable-timeseriescollection (fn []
+				       (reset! enabled-collection-notify false))
+	
+	enable-timeseriescollection (fn []
+				      (reset! enabled-collection-notify true)
+				      (.fireDatasetChanged time-series))
+
 ;	right-series (TimeSeriesCollection.)
 	chart (doto (ChartFactory/createTimeSeriesChart 
 					      nil nil nil 
-					      time-series false false false))
+					      time-series false false false)
+		
+		)
 		
 	
 
 
 	tbl-model (create-table-model
-		   (fn [row-num] 
-		     (.removeSeries time-series row-num))
+		   (fn [row] 
+		     (.removeSeries time-series (.getSeries time-series (name-as-comparable row))))
 		   (fn [row-num color]
 		     (.. chart (getPlot) (getRenderer) (setSeriesPaint row-num color))))
 
@@ -583,7 +601,7 @@
 						(reset! highlighted nil)
 						))
 					    (when-not @highlighted
-					      (.setSeriesStroke renderer row (BasicStroke. 2.0)) 
+					      (.setSeriesStroke renderer row (BasicStroke. 4.0)) 
 					      (reset! highlighted [row stroke]))))
 			      
 			      (mouseExited [event]
@@ -593,6 +611,10 @@
 											       (reset! highlighted nil)) 
 					     )))
 	]
+					(.setForegroundAlpha (.getPlot chart) 0.8)
+					(.setDrawSeriesLineAsPath (.getRenderer (.getPlot chart)) true)
+					(.setRangeCrosshairLockedOnData (.getPlot chart) false)
+    ;(.setRenderer (.getPlot chart) (XYSplineRenderer. 1))
 
 		(.addProgressListener chart (proxy [ChartProgressListener] []
 					(chartProgress [e]
@@ -712,6 +734,8 @@
 					;(ChartUtilities/applyCurrentTheme chart)
    
     {
+     :disable-collection disable-timeseriescollection
+     :enable-collection enable-timeseriescollection
      :name-as-comparable name-as-comparable
      :comparable-as-name comparable-as-name 
      :data (atom {})
