@@ -1,4 +1,4 @@
-(defproject Monitor "1.0.3"
+(defproject Monitor "1.0.4"
   :description "FIXME: write"
   :dependencies [[org.clojure/clojure "1.2.0"]
                  [org.clojure/clojure-contrib "1.2.0"]
@@ -9,7 +9,7 @@
   :min-lein-version "1.4.1" 
 ;  :dev-dependencies [[swank-clojure "1.2.1"]
 ;		     [lein-javac "1.2.1-SNAPSHOT"]]
-:dev-dependencies [[swank-clojure "1.2.1"]]
+  :dev-dependencies [[swank-clojure "1.2.1"]]
   :javac-options {:debug "true"}
   :java-source-path "src"
 ;  :hooks [leiningen.hooks.javac]

@@ -34,6 +34,7 @@
 			     (assoc r (key per-subname) [(val per-subname)])))
 			 result 
 			 (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
+	       
 	       (sorted-map) names)))
   ([server]
      (let [raw-names (.rawLiveNames server)
@@ -91,7 +92,7 @@
 		       (val a-data))) 
 		   {} data)
 	   {})))
-  ([names func-string  server]
+  ([names server]
      (try
        (let [stringed-names-in-hashmaps (reduce 
 					(fn [r i]
@@ -100,11 +101,15 @@
 						    (fn [a b]
 						      (assoc a (name (key b)) (val b))) 
 						    {} i)))
-					  ) [] names)
-	    data (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps))]
-	(reduce (fn [result a-data] 
-		  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (transform (val a-data) func-string)))) 
-		{} data))
+					  ) [] names)]
+	 (reduce (fn [result a-data]
+		   (assoc result (names-as-keyworded (key a-data)) (into (sorted-map) (val a-data))))
+	  {}
+	  (.rawLiveData (server) (java.util.ArrayList. stringed-names-in-hashmaps))))
+	;(reduce (fn [result a-data] 
+	;	  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (transform (val a-data) func-string)))) 
+					;	{} data))
+	 
      (catch Exception e  (throw e)))))
 
 (defn create-table-model [remove-graph-fn recolor-graph-fn] 
@@ -222,7 +227,7 @@
 									    (let [element (get row current-keyword)]
 									      (conj toadd element))
 									    toadd))
-									#{} (current-keyword names))]
+									(sorted-set) (current-keyword names))]
 						      (dorun (map (fn [el] (. current-model addElement el)) toadd)))
 						    (.setSelectedItem current-model currently-selected))) 
 						combo-models))

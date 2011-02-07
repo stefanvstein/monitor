@@ -1,13 +1,13 @@
 (ns monitor.gui
-  (:use [clojure.stacktrace :only [root-cause]])
+  (:use [clojure.stacktrace :only [root-cause print-cause-trace]])
   (:use [monitor.analysis :only [analysis-add-dialog new-analysis-panel]])
   (:use [monitor.runtime :only [runtime-add-dialog new-runtime-panel get-new-data]])
   (:use [monitor.commongui :only [new-window-fn]])
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JLabel JDialog JTextField WindowConstants SwingUtilities
-			GroupLayout GroupLayout$Alignment))
+			GroupLayout GroupLayout$Alignment KeyStroke JComponent))
   (:import (java.awt Dimension BorderLayout FlowLayout))
-  (:import (java.awt.event WindowAdapter ActionListener))
+  (:import (java.awt.event WindowAdapter ActionListener KeyEvent))
   (:import (java.net Socket UnknownHostException ConnectException))
   (:import (java.io ObjectInputStream))
   (:import (java.util.concurrent Executors TimeUnit)))
@@ -57,6 +57,7 @@
       (try
 	(get-new-data (fn [] server))
 	(catch Exception e
+	  (print-cause-trace e) 
 	  (dosync
 	   (ref-set connection-string (str "Connection lost " @last-host ":" @last-port)) 
 	   (ref-set current-server nil))
@@ -136,13 +137,17 @@
 			     (do (JOptionPane/showMessageDialog 
 				  dialog (.getMessage cause) "Error" JOptionPane/ERROR_MESSAGE)))))))
 	  on-cancel #(.dispose dialog)
+	  ok-listener (proxy [ActionListener] [] (actionPerformed [event]  (on-ok)))
 	  ok (doto (JButton. "Ok")
-	       (.addActionListener (proxy [ActionListener] [] (actionPerformed [event]  (on-ok)))))
+	       (.addActionListener ok-listener))
+	  cancel-listener (proxy [ActionListener] [] (actionPerformed [event] (on-cancel)))
 	  cancel (doto (JButton. "Cancel")
-		   (.addActionListener (proxy [ActionListener] [] (actionPerformed [event] (on-cancel)))))
+		   (.addActionListener cancel-listener))
 	  host-label (JLabel. "Host")
 	  port-label (JLabel. "Port")]
-      
+
+      (.registerKeyboardAction (.getRootPane dialog) ok-listener (KeyStroke/getKeyStroke KeyEvent/VK_ENTER 0) JComponent/WHEN_IN_FOCUSED_WINDOW)
+      (.registerKeyboardAction (.getRootPane dialog) cancel-listener (KeyStroke/getKeyStroke KeyEvent/VK_ESCAPE 0) JComponent/WHEN_IN_FOCUSED_WINDOW)
       
       (let [contentPane (.getContentPane dialog)]
 	(let [panel (JPanel.)]      
@@ -175,6 +180,7 @@
 	    (.add ok)
 	    (.add cancel))))
       (.pack dialog)
+      (. dialog setLocationRelativeTo parent)
       (. dialog setVisible true)))
 
 (defn exit
@@ -198,6 +204,7 @@
   (let [dialog (analysis-add-dialog contents server)]
     (doto dialog
       (.pack)
+      (.setLocationRelativeTo (SwingUtilities/windowForComponent (:panel contents))) 
       (.setVisible true)))))
 
 (defn add-runtime [contents]
@@ -208,6 +215,7 @@
  (let [dialog (runtime-add-dialog contents server)]
     (doto dialog
       (.pack)
+      (.setLocationRelativeTo (SwingUtilities/windowForComponent (:panel contents))) 
       (.setVisible true)))))
 
 	 
@@ -239,6 +247,7 @@
 	(.add (:panel contents) BorderLayout/CENTER))
       (.setJMenuBar (doto (JMenuBar.)
 		      (.add (doto (JMenu. "File")
+			      (.setMnemonic KeyEvent/VK_F)
 			      (.setName "fileMenu")
 			      (.add (doto (JMenuItem. "New Analysis window")
 				      (.setName "newAnalysisWindow")
@@ -275,5 +284,6 @@
 			      
 	
       (.pack)
+      (.setLocationByPlatform true)
       (.setVisible true))
     contents)))

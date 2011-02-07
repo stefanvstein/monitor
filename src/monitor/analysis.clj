@@ -7,12 +7,12 @@
 			JPanel JScrollPane JSplitPane JTable JCheckBox JLabel Box JDialog JComboBox
 			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
 			DefaultComboBoxModel GroupLayout BoxLayout GroupLayout$Alignment JPopupMenu
-			BorderFactory JSpinner$DateEditor  DefaultCellEditor Box))
+			BorderFactory JSpinner$DateEditor  DefaultCellEditor Box KeyStroke JComponent))
 
   (:import (javax.swing.table TableCellRenderer AbstractTableModel TableRowSorter))
   (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
 		     GridBagLayout GridBagConstraints Insets BasicStroke ))
-  (:import (java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter ItemEvent ItemListener))
+  (:import (java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter ItemEvent ItemListener KeyEvent))
   (:import (java.net Socket UnknownHostException))
   (:import (java.io ObjectInputStream))
   (:import (java.util Calendar Date Comparator))
@@ -21,7 +21,7 @@
   (:import (org.jfree.chart.axis NumberAxis))
   (:import (org.jfree.chart.event ChartProgressEvent ChartProgressListener RendererChangeEvent))
   (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities))
-  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem Millisecond FixedMillisecond))
+  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem FixedMillisecond))
   (:import (org.jfree.chart.renderer.xy SamplingXYLineRenderer StandardXYItemRenderer XYSplineRenderer))
   (:import (monitor SplitDateSpinners)))
 
@@ -216,7 +216,7 @@
 								      "Mean/Day" (* 2 24 60 60 1000)
 								      "Min/Day" (* 2 24 60 60 1000)
 								      "Max/Day" (* 2 24 60 60 1000))
-						     data-with-nans (stime "with-nans" (with-nans data-with-new-data nan-distance))
+						     data-with-nans (with-nans data-with-new-data nan-distance)
 						     reduce-samples (fn reduce-samples [data] 
 								      (if (next data) 
 									(loop [s (next data), result data, previous (first data), was-equal false]
@@ -410,17 +410,21 @@
 			 add)
 	close (JButton. "Close")]
 	
-	
-	(doto dialog
-	  (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
-	  (.setResizable false))
-	
-	(.addActionListener close (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog))))
-	(.addActionListener add (proxy [ActionListener] [] (actionPerformed [event] (onAdd contents))))
-	(.addActionListener add-new-window (proxy [ActionListener] []
-					     (actionPerformed [event]
-							      (onAdd (@new-window-fn true))
-							      )))
+	(let [close-listener (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog)))
+	      add-listener (proxy [ActionListener] [] (actionPerformed [event] (when (.isEnabled add)
+										 (onAdd contents))))
+	      add-new-listener (proxy [ActionListener] [] (actionPerformed [event] (when (.isEnabled add-new-window)
+										     (onAdd (@new-window-fn true)))))
+	      ]
+	  (doto dialog
+	    (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
+	    (.setResizable false))
+	  (.registerKeyboardAction (.getRootPane dialog) add-listener (KeyStroke/getKeyStroke KeyEvent/VK_ENTER java.awt.event.InputEvent/ALT_DOWN_MASK) JComponent/WHEN_IN_FOCUSED_WINDOW)
+	  (.registerKeyboardAction (.getRootPane dialog) add-new-listener (KeyStroke/getKeyStroke KeyEvent/VK_ENTER java.awt.event.InputEvent/SHIFT_DOWN_MASK) JComponent/WHEN_IN_FOCUSED_WINDOW)
+	  (.registerKeyboardAction (.getRootPane dialog) close-listener (KeyStroke/getKeyStroke KeyEvent/VK_ESCAPE 0) JComponent/WHEN_IN_FOCUSED_WINDOW)
+	  (.addActionListener close close-listener)
+	  (.addActionListener add add-listener)
+	  (.addActionListener add-new-window add-new-listener ))
 	
 	(let [contentPane (.getContentPane dialog)]
 	  (. contentPane add @center-panel BorderLayout/CENTER)
@@ -504,9 +508,12 @@
 						      (reset! combomodels-on-center (second panel-and-models))
 						      (.add content-pane panel BorderLayout/CENTER)
 						      )
-						    (.pack dialog))))]
-				 (. update addActionListener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) )))
+						    (.pack dialog))))
+				     update-listener (proxy [ActionListener] [] (actionPerformed [_] (onUpdate) ))]
+				 (. update addActionListener update-listener)
+				 (.registerKeyboardAction (.getRootPane dialog) update-listener (KeyStroke/getKeyStroke KeyEvent/VK_U java.awt.event.InputEvent/CTRL_DOWN_MASK) JComponent/WHEN_IN_FOCUSED_WINDOW)
 				 update)))
+	  
 	dialog)))
 
 
@@ -613,19 +620,19 @@
 	]
 					(.setForegroundAlpha (.getPlot chart) 0.8)
 					(.setDrawSeriesLineAsPath (.getRenderer (.getPlot chart)) true)
-					(.setRangeCrosshairLockedOnData (.getPlot chart) false)
+;					(.setRangeCrosshairLockedOnData (.getPlot chart) false)
     ;(.setRenderer (.getPlot chart) (XYSplineRenderer. 1))
 
 		(.addProgressListener chart (proxy [ChartProgressListener] []
-					(chartProgress [e]
-						       (when (= (.getType e) ChartProgressEvent/DRAWING_FINISHED)
-							 (when-let [date (let [l (long (.getDomainCrosshairValue (.getPlot chart)))]
+					      (chartProgress [e]
+							     (when (= (.getType e) ChartProgressEvent/DRAWING_FINISHED)
+							       (when-let [date (let [l (long (.getDomainCrosshairValue (.getPlot chart)))]
 									   (if (zero? l)
 									     nil
 									     (Date. l)))]
 							   (.setText status-label (.format (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss") date))
 							   (doseq [s (.getSeries time-series)]
-							     (let [index  (let [ind (.getIndex s (Millisecond. date))]
+							     (let [index  (let [ind (.getIndex s (FixedMillisecond. date))]
 									    (if (< ind 0)
 									      (dec (Math/abs ind))
 									      ind))
@@ -642,10 +649,7 @@
 								  (let [v (.getValue data)]
 								    (if (isNan v)
 								      "" v))
-								  ""))
-							       
-
-							     )))))))
+								  "")))))))))
 
 							
 		
