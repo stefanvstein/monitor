@@ -155,7 +155,7 @@
 	last-time (atom nil)
 	percent (fn [a sum] (if (zero? sum)
 			      0
-			      (double (* 100 (/ a sum)))))
+			      (* 100.0 (/ (double a) (double sum)))))
 	cpu-jiffies (fn [total-new total-old]
 		      (let [user (- (:user total-new) (:user total-old))
 			    nice (- (:nice total-new) (:nice total-old))
@@ -205,14 +205,11 @@
 				  (reduce (fn [r ^File pid-dir]
 					    (with-open [stat (BufferedReader. (FileReader. (File. pid-dir "stat")))]
 					      (if-let [line (.readLine stat)]
-						(let [s (seq (.split line "\\s"))
-						      stats (vec (reverse s))
-						      rss (Long/parseLong (get stats 20))
-						      vsize (Long/parseLong (get stats 21))
-						      threads (Long/parseLong (get stats 24))
-						      cutime  (Long/parseLong (get stats 30))
-						      stime  (Long/parseLong (get stats 29))]
-						  (assoc r (Integer/parseInt (first s)) {:user cutime :system stime}))
+						(let [g (re-find #"(\d+)\s\(.*\)\s(.*)" line)]
+						  (if (= 3 (count g))
+						      (let [stats (vec (seq (.split (nth g 2) "\\s")))]
+							(assoc r (Integer/parseInt (second g)) {:user (Long/parseLong (get stats 11)) :system (Long/parseLong (get stats 12))}))
+						      r))
 						  r))) {} pids-dirs))]
 	    (try
 	      (let [system (reduce (fn [r e]

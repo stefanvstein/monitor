@@ -265,16 +265,20 @@
 	(let [days (full-days-between from to)
 	      alldata (atom {})]
 	  (swap! num-to-render (fn [d] (+ d (count days))))
-	  
+
 	  (stime "retrieve and merge" (dorun (map (fn [ e ]
-			(swap! alldata (fn [a] (merge a (shift-time (get-data (first e)
-									      (second e)
-									      name-values
-					;func-string
-									      server))))))
-		      days)))
+						    (swap! alldata (fn [a] (reduce (fn [r l]
+										     (if-let [current (get r (key l))]
+										       (assoc r (key l) (merge current (val l)))
+										       (assoc r (key l) (val l))))
+										   a
+										   (shift-time (get-data (first e)
+													  (second e)
+													  name-values
+													  server))))))
+						  days)))
 	  (let [res (stime "transform" (reduce (fn [r e]
-			      (assoc r (key e) (transform (val e) func-string))) {} @alldata))]
+						 (assoc r (key e) (transform (val e) func-string))) {} @alldata))]
 	    (updatechart res)))
 	(finally
 	(SwingUtilities/invokeLater (fn []

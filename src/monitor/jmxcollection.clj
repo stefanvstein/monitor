@@ -181,43 +181,51 @@
 (defn thread-info [thread-bean]
   (let [bean #^ThreadMXBean (:bean thread-bean)
 	threadinfo #^ThreadInfo (.getThreadInfo bean (.getAllThreadIds bean))
-	result (atom {})]
+	result (atom {})
+	host (remote-hostname)
+	jvm (vmname)]
     (dorun (map (fn [#^ThreadInfo thread-info]
-		  (when (and (:cpuTime thread-bean) (.isThreadCpuTimeEnabled bean))
-		    (swap! result (fn [current] (assoc current {:category "Thread" 
+		  (let [id (.getThreadId thread-info)
+			instance (str (.getThreadName thread-info) ":" id)]
+		    (when (and (:cpuTime thread-bean) (.isThreadCpuTimeEnabled bean))
+		      (swap! result (fn [current] (assoc current {:category "Thread" 
 								:counter "CPU Time"
-								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
-								:jvm (vmname)
-								:host (remote-hostname)}
-						       (/ (.getThreadCpuTime bean (.getThreadId thread-info)) 1000000000.0)))))
+								:instance instance
+								:jvm jvm
+								:host host}
+						       (/ (.getThreadCpuTime bean id) 1000000000.0))))
+		    (swap! result (fn [current] (assoc current {:category "Thread" 
+								:counter "CPU User Time"
+								:instance instance
+								:jvm jvm
+								:host host}
+						       (/ (.getThreadUserTime bean id) 1000000000.0)))))
 		  (swap! result (fn [current] (assoc current {:category "Thread" 
-								:counter "Block Count"
-								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
-								:jvm (vmname)
-								:host (remote-hostname)}
-						       (double (.getBlockedCount thread-info)))))
+							      :counter "Block Count"
+							      :instance instance 
+							      :jvm jvm
+							      :host host}
+						     (.getBlockedCount thread-info))))
 		  (swap! result (fn [current] (assoc current {:category "Thread" 
-								:counter "Waited Count"
-								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
-								:jvm (vmname)
-								:host (remote-hostname)}
-						       (double (.getWaitedCount thread-info)))))
+							      :counter "Waited Count"
+							      :instance instance
+							      :jvm jvm
+							      :host host}
+						     (.getWaitedCount thread-info))))
 		  (when (and (:contention thread-bean) (.isThreadContentionMonitoringEnabled bean))
 		    (swap! result (fn [current] (assoc current {:category "Thread" 
 								:counter "Waited Time"
-								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
-								:jvm (vmname)
-								:host (remote-hostname)}
+								:instance instance
+								:jvm jvm
+								:host host}
 						       (/ (.getWaitedTime thread-info) 1000.0))))
-		     (swap! result (fn [current] (assoc current {:category "Thread" 
+		    (swap! result (fn [current] (assoc current {:category "Thread" 
 								:counter "Blocked Time"
-								:instance (str (.getThreadName thread-info) ":" (.getThreadId thread-info)) 
-								:jvm (vmname)
-								:host (remote-hostname)}
-						       (/ (.getBlockedTime thread-info) 1000.0)))))
-						       
-
-	      ) threadinfo))
+								:instance instance
+								:jvm jvm
+								:host host}
+						       (/ (.getBlockedTime thread-info) 1000.0)))))))
+		threadinfo))
     @result))
 
 (defn memory-values [mem-fns #^MBeanServerConnection server]
@@ -339,6 +347,24 @@
  ([stop-fn] 
     (jmx-java6-impl stop-fn false)))
 
+(defn- jmx-java6-threads
+  ([stop-fn]
+  (let [thread-beans (thread-bean (mbean-server))
+	pid (remote-pid)]
+	
+    (while (not (stop-fn))
+	   (let [the-time (remote-time)]
+	     	       (dorun (map (fn [i]  
+			     (*add* (assoc (key i) :pid pid) the-time (val i))) 
+			   (thread-info thread-beans))))))))
+
+(defn jmx-threads
+([name port stop-fn]
+     (using-named-jmx-port port name (jmx-java6-threads stop-fn)))
+ ([name host port stop-fn]
+   (using-named-jmx host port name (jmx-java6-threads stop-fn)))
+ ([stop-fn] 
+    (jmx-java6-threads stop-fn false)))
 
 #_(deftest test-java6
  (using-live

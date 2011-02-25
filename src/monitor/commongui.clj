@@ -89,7 +89,7 @@
 		     (assoc result
 		       (names-as-keyworded (key a-data))
 					;(transform (val a-data) func-string)))
-		       (val a-data))) 
+		       (into (sorted-map) (val a-data)))) 
 		   {} data)
 	   {})))
   ([names server]

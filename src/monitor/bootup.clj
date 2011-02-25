@@ -1,5 +1,5 @@
 (ns monitor.bootup
-  (:use (monitor logger linuxproc gui jmxremote)))
+  (:use (monitor logger linuxproc gui jmxremote jmxthreads)))
 
 (defn boot [line]
   (using-logger
@@ -20,6 +20,8 @@
 	     
 	     (println "You need to supply a listener port")))
 	 (when (= "jmx" (first line))
-	   (jmx-probe (rest line))))
+	   (jmx-probe (rest line)))
+	 (when (= "threads" (first line))
+	   (read-threads (rest line))))
 	   
      (new-window true))))

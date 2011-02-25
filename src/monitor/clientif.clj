@@ -54,6 +54,15 @@
       (.put final-result (HashMap. #^java.util.Map (keyworded-names-as-string (key row))) (TreeMap. #^java.util.Map (val row))))
     final-result))
 
+(defn add-external-data [names data]
+  (let [keyed-names (reduce (fn [r v]
+			      (assoc r (keyword (key v)) (val v)))
+			    {} names)]
+    (when (seq keyed-names)
+      (doseq [d data]
+	(add-data keyed-names (key d) (val d))))))
+  
+
 (defn raw-live-names []
   ;(println "Raw-live-names")
   (let [result (reduce (fn [result a-name]
@@ -81,6 +90,8 @@
 			      (raw-live-names))
 		(rawNames [from# to#]	  
 			  (raw-names from# to#))
+		(add [name data]
+		     (add-external-data name data))
 		(ping [])
 		))
 
