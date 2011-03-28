@@ -42,8 +42,7 @@
 	   perfmon-process-counters
 	   perfmon-process-instances))
 
-(in-env 60
-	10
+(in-env 100
 	"db"
 	3030))
 
