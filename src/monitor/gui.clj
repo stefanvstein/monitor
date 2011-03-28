@@ -90,42 +90,38 @@
     (when (alive)
       (.schedule @runtime-thread a-fn seconds TimeUnit/SECONDS)))
 
-  
-  (defn connect-dialog [parent]
-    (let [dialog (doto (JDialog. parent "Connection" false)
-		   (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
-		   (.setResizable false))
-	
-	  host (JTextField. @last-host)
-	  port (JTextField. @last-port)
-	  on-ok #(let [host (.getText host)
-		       port (.getText port)]
-		   (try
-		     (let [port (Integer/parseInt port)]
-		       (if (> 0 port)
-			 (JOptionPane/showMessageDialog dialog 
-							"Port can't be negative" 
-							"Error" JOptionPane/ERROR_MESSAGE) 
-			 (if (= 0 (. (.trim host) length))
-			   (JOptionPane/showMessageDialog dialog 
-							  "Host can't be empty" "Error" 
-							  JOptionPane/ERROR_MESSAGE)
-			   (when-let [server (connect host port)]
-			     (dosync
-			      (ref-set current-server server)
-			      (ref-set last-host host)
-			      (alter last-port (fn [_] (Integer/toString port)))
-			      (ref-set connection-string (str "Connected " @last-host ":" @last-port)))
-			     (update-connection-string)
-			     (.put prefs "last-monitor-host" host)
-			     (.put prefs "last-monitor-port" (Integer/toString port))
-			     (swap! runtime-thread (fn [rt]
-						     (if-not (alive)
-						       (doto (Executors/newSingleThreadScheduledExecutor)
-							 (.scheduleAtFixedRate poll 1 15 TimeUnit/SECONDS))
-						       rt)))
-    			     (.dispose dialog)))))
-		     (catch Exception e
+
+  (defn doConnect [host port dialog]
+    (try
+      (let [port (if (= (class port) String)
+		   (Integer/valueOf port)
+		   port)]
+        (if (> 0 port)
+	(JOptionPane/showMessageDialog dialog 
+				       "Port can't be negative" 
+				       "Error" JOptionPane/ERROR_MESSAGE) 
+	(if (= 0 (. (.trim host) length))
+	  (JOptionPane/showMessageDialog dialog 
+					 "Host can't be empty" "Error" 
+				       JOptionPane/ERROR_MESSAGE)
+	  
+	  (when-let [server (connect host port)]
+	    
+	    (dosync
+	     (ref-set current-server server)
+	     (ref-set last-host host)
+	     (alter last-port (fn [_] (Integer/toString port)))
+	     (ref-set connection-string (str "Connected " @last-host ":" @last-port)))
+	    (update-connection-string)
+	    (.put prefs "last-monitor-host" host)
+	    (.put prefs "last-monitor-port" (Integer/toString port))
+	    (swap! runtime-thread (fn [rt]
+				    (if-not (alive)
+				      (doto (Executors/newSingleThreadScheduledExecutor)
+					(.scheduleAtFixedRate poll 1 15 TimeUnit/SECONDS))
+				      rt)))
+	    server))))
+      (catch Exception e
 		       (let [cause (root-cause e)]
 			 (condp = (class cause)
 			     NumberFormatException (JOptionPane/showMessageDialog 
@@ -136,6 +132,20 @@
 						   "Error" JOptionPane/ERROR_MESSAGE)
 			     (do (JOptionPane/showMessageDialog 
 				  dialog (.getMessage cause) "Error" JOptionPane/ERROR_MESSAGE)))))))
+      
+  
+  (defn connect-dialog [parent]
+    (let [dialog (doto (JDialog. parent "Connection" false)
+		   (.setDefaultCloseOperation WindowConstants/DISPOSE_ON_CLOSE)
+		   (.setResizable false))
+	
+	  host (JTextField. @last-host)
+	  port (JTextField. @last-port)
+	  on-ok #(let [host (.getText host)
+		       port (.getText port)]
+		       	   (when (doConnect host port dialog)
+			     (.dispose dialog)))
+		     
 	  on-cancel #(.dispose dialog)
 	  ok-listener (proxy [ActionListener] [] (actionPerformed [event]  (on-ok)))
 	  ok (doto (JButton. "Ok")
@@ -224,66 +234,70 @@
     (add-analysis contents)
     (add-runtime contents)))
 
-(defn new-window [analysis]
-  (reset! new-window-fn new-window) 
-  (let [frame (JFrame.)
-	contents (if analysis (new-analysis-panel) (new-runtime-panel frame))]
-    (when-let [connection-label (:connection-label contents)]
-      (.setText connection-label @connection-string))
-    (swap! frames-and-content #(assoc % frame contents))
-    (doto frame 
-      (.setDefaultCloseOperation (JFrame/DISPOSE_ON_CLOSE))
-      (.addWindowListener (proxy [WindowAdapter] []
-			   (windowClosed [window-event]
+(defn new-window
+  ([analysis]
+     (reset! new-window-fn new-window) 
+     (let [frame (JFrame.)
+	   contents (if analysis (new-analysis-panel) (new-runtime-panel frame))]
+       (when-let [connection-label (:connection-label contents)]
+	 (.setText connection-label @connection-string))
+       (swap! frames-and-content #(assoc % frame contents))
+       (doto frame 
+	 (.setDefaultCloseOperation (JFrame/DISPOSE_ON_CLOSE))
+	 (.addWindowListener (proxy [WindowAdapter] []
+			       (windowClosed [window-event]
 					 (swap! frames-and-content #(dissoc % frame))
 					 (proxy-super windowClosed window-event)
 					 (when (= 0 (count @frames-and-content)) (exit)))))
-					 
-      (.setTitle (:name contents))
-      (.setName (:name contents))
-      (.setMinimumSize (Dimension. 300 300)) 
-      (doto (.getContentPane) 
-	(.setLayout ( BorderLayout.))
-	(.add (:panel contents) BorderLayout/CENTER))
-      (.setJMenuBar (doto (JMenuBar.)
-		      (.add (doto (JMenu. "File")
-			      (.setMnemonic KeyEvent/VK_F)
-			      (.setName "fileMenu")
-			      (.add (doto (JMenuItem. "New Analysis window")
-				      (.setName "newAnalysisWindow")
-				      (.addActionListener (proxy [ActionListener] []
-							    (actionPerformed [action-event]
-									     (new-window true))))))
-			      (.add (doto (JMenuItem. "New Runtime window")
-				      (.setName "newRuntimeWindow")
-				      (.addActionListener (proxy [ActionListener] []
-							    (actionPerformed [action-event]
-									     (new-window false))))))
-			      (.add (doto (JMenuItem. "Connect")
-				      (.setName "connectMenu")
-				      (.addActionListener (proxy [ActionListener] []
-							    (actionPerformed [action-event]
-									     (connect-dialog frame))))))
-			      
-			      (.add (doto (JMenuItem. "Add")
-				      (.setName "add")
-				      (.addActionListener (proxy [ActionListener] []
-							    (actionPerformed [action-event]
-									     (add contents))))))
-			      (.add (doto (JMenuItem. "Close")
-				      (.setName "closeWindow")
-				      (.addActionListener (proxy [ActionListener] []
-							    (actionPerformed [action-event]
-									     (.dispose frame))))))
-			      (.add (doto (JMenuItem. "Exit")
-				      (.setName "exit")
-				      (.addActionListener (proxy [ActionListener] []
-							    (actionPerformed [action-event]
-									     (exit frame))))))
-			      ))))
-			      
-	
-      (.pack)
-      (.setLocationByPlatform true)
-      (.setVisible true))
-    contents)))
+	 
+	 (.setTitle (:name contents))
+	 (.setName (:name contents))
+	 (.setMinimumSize (Dimension. 300 300)) 
+	 (doto (.getContentPane) 
+	   (.setLayout ( BorderLayout.))
+	   (.add (:panel contents) BorderLayout/CENTER))
+	 (.setJMenuBar (doto (JMenuBar.)
+			 (.add (doto (JMenu. "File")
+				 (.setMnemonic KeyEvent/VK_F)
+				 (.setName "fileMenu")
+				 (.add (doto (JMenuItem. "New Analysis window")
+					 (.setName "newAnalysisWindow")
+					 (.addActionListener (proxy [ActionListener] []
+							       (actionPerformed [action-event]
+										(new-window true))))))
+				 (.add (doto (JMenuItem. "New Runtime window")
+					 (.setName "newRuntimeWindow")
+					 (.addActionListener (proxy [ActionListener] []
+							       (actionPerformed [action-event]
+										(new-window false))))))
+				 (.add (doto (JMenuItem. "Connect")
+					 (.setName "connectMenu")
+					 (.addActionListener (proxy [ActionListener] []
+							       (actionPerformed [action-event]
+										(connect-dialog frame))))))
+				 
+				 (.add (doto (JMenuItem. "Add")
+					 (.setName "add")
+					 (.addActionListener (proxy [ActionListener] []
+							       (actionPerformed [action-event]
+										(add contents))))))
+				 (.add (doto (JMenuItem. "Close")
+					 (.setName "closeWindow")
+					 (.addActionListener (proxy [ActionListener] []
+							       (actionPerformed [action-event]
+										(.dispose frame))))))
+				 (.add (doto (JMenuItem. "Exit")
+					 (.setName "exit")
+					 (.addActionListener (proxy [ActionListener] []
+							       (actionPerformed [action-event]
+										(exit frame))))))
+				 ))))
+	 
+	 
+	 (.pack)
+	 (.setLocationByPlatform true)
+	 (.setVisible true))
+       contents))
+  ([analysis host port]
+     (let [w (new-window analysis)]
+       (doConnect host port (:panel w))))))

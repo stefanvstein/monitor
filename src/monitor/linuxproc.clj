@@ -4,7 +4,7 @@
   (:import (java.util.concurrent Executors))
   (:import (java.util.concurrent.locks ReentrantLock))
   (:import (java.net SocketTimeoutException ServerSocket Socket SocketAddress))
-  (:use (clojure pprint test))
+  (:use (clojure pprint test stacktrace))
   (:use (monitor database termination shutdown))
   (:use [clojure.contrib.logging :only [info]]))
 
@@ -39,9 +39,8 @@
 		      (/ (- (+ current max-value) last) seconds)
 		    (/ (- current last) seconds)))]
     (fn net-dev []
-      (let [now (System/currentTimeMillis)
-	    stream (BufferedReader. (FileReader. "/proc/net/dev"))]
-	(try
+      (let [now (System/currentTimeMillis)]
+	(with-open [stream (BufferedReader. (FileReader. "/proc/net/dev"))]
 	  (.readLine stream)
 	  
 	  (let [header (.readLine stream)
@@ -61,36 +60,28 @@
 						 :sent-packets (Long/parseLong (nth match 11))
 						 :send-errors (Long/parseLong (nth match 12))
 						 :send-drops (Long/parseLong (nth match 13))
-						 :send-collisions (Long/parseLong (nth match 14))
-						 })
+						 :send-collisions (Long/parseLong (nth match 14))})
 					 r))
-				     {} lines)]
-		   (try
-		  (if @last-values
-		    (let [seconds (/ (-  now @last-time) 1000.0)]
-		     
+				     {}
+				     lines)]
+		  (try
+		    (if @last-values
+		      (let [seconds (/ (-  now @last-time) 1000.0)]
+			
 			(reduce (fn [r e]
 				  (let [lv (get @last-values (key e))
 					cv (val e)]
 				    (assoc r (key e)
 					   {"Received kB/s" (/ (calculate (:received-bytes lv) (:received-bytes cv) seconds) 1024.0)
 					    "Received packets/s" (calculate (:received-packets lv) (:received-packets cv) seconds)
-					    "Receive errors/s" (calculate (:receive-errors lv) (:receive-errors cv) seconds)
-					    "Receive drops/s" (calculate (:receive-drops lv) (:receive-drops cv) seconds)
+					    
 					    "Sent kB/s" (/ (calculate (:sent-bytes lv) (:sent-bytes cv) seconds) 1024.0)
-					    "Sent packets/s" (calculate (:sent-packets lv) (:sent-packets cv) seconds)
-					    "Send errors/s" (calculate (:send-errors lv) (:send-errors cv) seconds)
-					    "Send drops/s" (calculate (:send-drops lv) (:send-drops cv) seconds)
-					    "Send collisions/s" (calculate (:send-collisions lv) (:send-collisions cv) seconds)}
-					   ))   
-				  ) {} values)
-			
-		  
-	      ))(finally
+					    "Sent packets/s" (calculate (:sent-packets lv) (:sent-packets cv) seconds)})))
+				{}
+				values)))
+		  (finally
 			 (reset! last-values values)
-			 (reset! last-time now)
-			 ))))))
-      (finally (.close stream)))))))
+			 (reset! last-time now))))))))))))
 
 (defn disk-fn []
   (let [pattern #"[\s0-9]*(sd[a-z]+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+).*"
@@ -98,17 +89,17 @@
 	last-disk (atom nil)
 	last-time (atom nil)]
     (fn disk []
-      (let [stream (BufferedReader. (FileReader. "/proc/diskstats"))]
-	(try
-	  
+      (with-open [stream (BufferedReader. (FileReader. "/proc/diskstats"))]
 	  (let [now (System/currentTimeMillis)
 		new-values
 		(reduce (fn [r line]
 			  (if-let [m (re-matches pattern line)]
 			    
-			    (assoc r (nth m 1) (assoc {}  :written (/ (Long/parseLong (nth m 8)) 2)
-						      :read (/ (Long/parseLong (nth m 4)) 2)
-						      :queue (Long/parseLong (nth m 10))))
+			    (assoc r (nth m 1) (assoc {}  :written (/ (Long/parseLong (nth m 8)) 2) ;7
+						      :writes (Long/parseLong (nth m 6))
+						      :read (/ (Long/parseLong (nth m 4)) 2) ;3
+						      :reads (Long/parseLong (nth m 2))
+						      :queue (Long/parseLong (nth m 10)))) ;9
 			    r)) {} (line-seq stream))]
 	   
 	    (try
@@ -124,6 +115,8 @@
 			    (assoc r (key e) (assoc {}
 					       "written kB/s" (/ (change (:written (val e)) (:written (get ldisk (key e)))) seconds)
 					       "read kB/s" (/ (change (:read (val e)) (:read (get ldisk (key e)))) seconds)
+					       "writes/s" (/ (change (:writes (val e)) (:writes (get ldisk (key e)))) seconds)
+					       "reads/s" (/ (change (:reads (val e)) (:reads (get ldisk (key e)))) seconds)
 					       "queue" (:queue (val e)))))
 			  {}
 			  new-values))
@@ -131,24 +124,42 @@
 			  (assoc r (key e) {"queue" (:queue (val e))}))
 			{}
 			new-values))
+	      (catch Exception e
+		(print-cause-trace e))
 	      (finally
 	       (reset! last-disk new-values)
-	       (reset! last-time now))))
-	    (finally
-	     (.close stream)))))))
+	       (reset! last-time now))))))))
 
 (defn sys-load []
-  (let [pattern #"^\d+\.\d+\s\d+\.\d+\s(\d+\.\d+)\s(\d+)/(\d+)\s.*"
-	stream (BufferedReader. (FileReader. "/proc/loadavg"))]
-    (try
-      (if-let [vals (next (re-matches pattern (.readLine stream)))]
-	{"average active threads/min" (Double/parseDouble (first vals))
-	 "active threads" (Long/parseLong (second vals))
-	 "threads" (Long/parseLong (second (next vals)))})
-      (finally
-       (.close stream))))
-  )
+  (let [pattern #"^\d+\.\d+\s\d+\.\d+\s(\d+\.\d+)\s(\d+)/(\d+)\s.*"]
+	(with-open [stream (BufferedReader. (FileReader. "/proc/loadavg"))]
+	  (when-let [vals (next (re-matches pattern (.readLine stream)))]
+	    {"average active threads/min" (Double/parseDouble (first vals))
+	     "active threads" (Long/parseLong (second vals))
+	     "threads" (Long/parseLong (second (next vals)))}))))
 
+(defn fd []
+   (let [p #"(?m)Max open files\s+(\d+|unlimited)"
+	 limits #(try
+		   (when-let [r (re-find p (slurp (File. % "limits")))]
+		     (let [max-files (second r)]
+		       (when (not (= max-files "unlimited"))
+			 (Integer/valueOf max-files))))
+		  (catch Exception _))
+	 fds #(try
+	       (count (.list (File. % "fd")))
+	       (catch Exception _))]
+     {"process" (into {} (filter identity (for [pid @pids-of-interest]
+				 (when-let [file-descs (fds pid)]
+				   (let [pidval (Integer/valueOf (.getName pid))
+					 res {"All" file-descs}]
+				     [pidval (if-let [maximum (limits pid)]
+					       (assoc res "% All" (* 100.0 (/ file-descs maximum)))
+					       res)])))))}))
+			    
+	
+	 
+  
 (defn cpu-fn []
   (let [value-pattern #"^cpu(\d*)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+).*"
 	last-cpu (atom {})
@@ -167,10 +178,10 @@
 			    sum (+ user nice system idle iowait irq softirq)]
 			{:user user :nice nice :system system :idle idle :iowait iowait :irq irq :softirq softirq :sum sum}))]
     (fn cpu []
-      (let [stream (BufferedReader. (FileReader. "/proc/stat"))
+      (let [
 	    timestamp (System/currentTimeMillis)
 	    pids-dirs @pids-of-interest]
-	(try
+	(with-open [stream (BufferedReader. (FileReader. "/proc/stat"))]
 	  (let [new-values (merge (reduce (fn [r ^String line]
 					    (cond
 					     (.startsWith line "ctxt") (assoc r :context-switches (Long/parseLong (.trim (.substring line 5))))
@@ -207,7 +218,7 @@
 					      (if-let [line (.readLine stat)]
 						(let [g (re-find #"(\d+)\s\(.*\)\s(.*)" line)]
 						  (if (= 3 (count g))
-						      (let [stats (vec (seq (.split (nth g 2) "\\s")))]
+						      (let [stats (vec (seq (.split ^String (nth g 2) "\\s")))]
 							(assoc r (Integer/parseInt (second g)) {:user (Long/parseLong (get stats 11)) :system (Long/parseLong (get stats 12))}))
 						      r))
 						  r))) {} pids-dirs))]
@@ -255,77 +266,66 @@
 		     
 	      (finally
 	       (reset! last-time timestamp)
-	       (reset! last-cpu new-values))))
-	  (finally (.close stream)))))))
-  
+	       (reset! last-cpu new-values)))))))))
+
+;Have a look at full circle #39
   (defn mem []
-    (let [memtotal-p #"^MemTotal:\s+(\d+)\s+kB.*" ;physical total
-	  memfree-p #"^MemFree:\s+(\d+)\s+kB.*";LowFree+HighFree, that is physical free
-	  buffers-p #"^Buffers:\s+(\d+)\s+kB.*";Mem in buffer cache
-	  cached-p #"^Cached:\s+(\d+)\s+kB.*";Disk cache - swap cache
-	  swap-cache-p #"^SwapCached:\s+(\d+)\s+kB.*"; Swaped mem in disk cache
-	  active-p #"^Active:\s+(\d+)\s+kB.*";Memory that has been used more recently and usually not reclaimed unless absolutely necessary.
-	  dirty-p #"^Dirty:\s+(\d+)\s+kB.*";Might need writing to disk
-	  low-total-p #"^LowTotal:\s+(\d+)\s+kB.*";Total avail for kernel
-	  low-free-p #"^LowFree:\s+(\d+)\s+kB.*";Free for kernel, might be occupied by others too
-	  swap-total-p #"^SwapTotal:\s+(\d+)\s+kB";swap memory 
-	  swap-free-p #"^SwapFree:\s+(\d+)\s+kB";swap free
-	  slab-p #"^Slab:\s+(/d+)\s+kB" ;Kernel data structure cache
-	  mapped-p #"^Mapped:\s+(\d+)\s+kB.*"
-	  writeback-p #"^Writeback:\s+(\d+)\s+kB.*"
-	  inactive-p #"^Inactive:\s+(\d+)\s+kB.*"
-	  patterns (assoc (sorted-map)
-		     :total-mem memtotal-p
-		     :free-mem memfree-p
-		     :buffers buffers-p
-		     :cached cached-p
-		     :swap-cache swap-cache-p
-		     :active active-p
-		     :dirty dirty-p
-		     :total-low low-total-p
-		     :free-low low-free-p
-		     :swap-total swap-total-p
-		     :swap-free swap-free-p
-		     :mapped mapped-p
-		     :slab slab-p
-		     :inactive inactive-p
-		     :writeback writeback-p)
-	  patterns-left (atom patterns)
-	  stream (BufferedReader. (FileReader. "/proc/meminfo"))]
-      (try
-	(let [values (reduce (fn [r line]
-			       (loop [patterns @patterns-left]
-				 (if-let [m (re-matches (val (first patterns)) line)]
-				   (do (swap! patterns-left #(dissoc % (key (first patterns))))
-				       (assoc r (key (first patterns)) (Long/parseLong (second m))))
-				   (if-let [remaining (next patterns)]
-				     (recur remaining)
-				     r))))
-			     {} (line-seq stream))]
+    (let [patterns (assoc (sorted-map)
+		     :total-mem "MemTotal:";physical total
+		     :free-mem "MemFree:";LowFree+HighFree, that is physical free
+		     :buffers "Buffers:";Mem in buffer cache
+		     :cached "Cached";;Disk cache - swap cache
+		     :swap-cache "SwapCached:"; Swaped mem in disk cache
+		     :swap-total "SwapTotal:";swap memory
+		     :swap-free "SwapFree:";swap free
+		     :actve "Active:" ;Memory that has been used more recently and usually not reclaimed unless absolutely necessary.
+		     :dirty "Dirty:";Might need writing to disk
+		     :total-low "LowTotal:";Total avail for kernel
+		     :free-low "LowFree:";Free for kernel, might be occupied by others too
+		     :slab "Slab:";Continous Kernel data structure cache
+		     :mapped "Mapped:"
+		     :write-back "Writeback:"
+		     :inactive "Inactive:"
+		     )]
+      (with-open [stream (BufferedReader. (FileReader. "/proc/meminfo"))]
+	(let [values (into {} (for [^String line (line-seq stream)
+				    ^String pat patterns
+				    :when (.startsWith line (val pat))]
+				[(key pat) (Long/parseLong (.trim (.substring line
+								        (inc (.length ^String (val pat)))
+								       (- (.length line) 3))))]))] 
+		       
 	  (let [result (atom 
 			(assoc {}
 			  "physical free" (* 1024 (:free-mem values))
 			  "physical used" (* 1024 (- (:total-mem values) (:free-mem values)))
-			  "swap free" (* 1024 (:swap-free values))
-			  "swap in use" (* 1024 (- (:swap-total values) (:swap-free values) (:swap-cache values)))
-			  "swap cached"  (* 1024 (:swap-cache values))
-			  "dirty" (* 1024 (:dirty values))
-			  "active" (* 1024 (:active values))
+			  "swap used" (* 1024 (- (:swap-total values) (:swap-free values) (:swap-cache values)))
 			  "cache" (* 1024 (+ (:cached values) (:swap-cache values)))
-			  "buffers" (* 1024 (:buffers values))))]
+			  "% available" (* 100.0 (/ (+ (:free-mem values) (:cached values) (:buffers values) (:swap-cache values))
+						    (:total-mem values)))
+			  "% cache" (* 100.0 (/ (+ (:cached values) (:swap-cache values))
+						(:total-mem values)))
+			  "% swaped" (* 100.0 (/ (- (:swap-total values) (:swap-free values) (:swap-cache values))
+						 (+ (:swap-total values) (:total-mem values))))
+			  "% swap" (* 100.0  (/ (- (:swap-total values) (:swap-free values) (:swap-cache values))
+						(:swap-total values)))
+			  ))]
 	    
-	    (when (:free-low values)
+	    #_(when (:free-low values)
 	      (swap! result #(assoc %   "low free" (* 1024 (:free-low values))
 				    "low used" (* 1024 (- (:total-low values) (:free-low values))))))
-	    (when (:inactive values)
-	      (swap! result #(assoc %   "inactive" (* 1024 (:inactive values)))))
+	    #_(when (:inactive values)
+		(swap! result #(assoc %   "inactive" (* 1024 (:inactive values))))
+		(swap! result #(assoc %  "active" (* 1024 (:active values))
+		)))
 	    
-	    (when (:writeback values)
-	      (swap! result #(assoc %  "dirty" (* 1024 (+ (:dirty values) (:writeback values))))))
-	    (when-let [slab (:slab values)]
-	      (swap! result #(assoc % "slab" (* 1024 (:slab values)))))
-	    (when-let [slab (:mapped values)]
-	      (swap! result #(assoc % "mapped" (* 1024 (:mapped values)))))
+	    #_(when (:writeback values)
+		(swap! result #(assoc %  "dirty" (* 1024 (+ (:dirty values) (:writeback values))))))
+	    #_(when-let [slab (:slab values)]
+		(swap! result #(assoc % "slab" (* 1024 (:slab values))))
+		(swap! result #(assoc % "buffers" (* 1024 (:buffers values)))))
+	    #_(when-let [slab (:mapped values)]
+		(swap! result #(assoc % "mapped" (* 1024 (:mapped values)))))
 	    
 	    (let [processes (assoc {}
 			      "process"
@@ -356,14 +356,12 @@
 					) {} @pids-of-interest))]
 	      (if-not (empty? (get processes "process"))
 		(merge @result processes)
-		@result))))
-      (finally
-       (.close stream)))))
+		@result)))))))
 
 
 
 (defn to-text [net-dev disk cpu]
-(pr-str (assoc {} (.getHostName (java.net.InetAddress/getLocalHost)) (assoc {} "Network Device" (net-dev) "Disk" (disk) "Cpu" (cpu) "Memory" (mem) "Load" (sys-load)))))
+  (pr-str (assoc {} (.getHostName (java.net.InetAddress/getLocalHost)) (assoc {} "Network Device" (net-dev) "Disk" (disk) "Cpu" (cpu) "Memory" (mem) "Load" (sys-load) "Descriptors" (fd)))))
 
 
 

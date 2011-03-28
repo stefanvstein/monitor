@@ -5,7 +5,9 @@
 	   (java.util Date)
 	   (java.net InetAddress UnknownHostException)
 	   (java.util.concurrent TimeUnit)
-	   (java.text SimpleDateFormat))
+	   (java.text SimpleDateFormat)
+	   (java.lang.reflect InvocationTargetException)
+	   (java.io File))
   (:use clojure.contrib.logging)
 					; for testing purposes
   (:use clojure.test)
@@ -50,6 +52,25 @@
 
 (declare remote-hostname vmname)
 
+(defn attach-mbean-connector
+   "Returns a structure used to connect to jmx server, by attaching to a pid. This requires tools.jar"
+   [pid vmname]
+    (let [vm-class (.loadClass (ClassLoader/getSystemClassLoader) "com.sun.tools.attach.VirtualMachine")
+	attach (.getMethod vm-class "attach" (into-array [String]))
+	vm (try
+	     (.invoke attach nil (into-array Object [pid]))
+	     (catch InvocationTargetException e
+	       (throw (.getCause e ))))
+	address (if-let [ address (.getProperty (.getAgentProperties vm) "com.sun.management.jmxremote.localConnectorAddress")]
+		  address
+		  (let [javahome (.getProperty (.getSystemProperties vm) "java.home")
+			agent (str javahome File/separator "lib" File/separator  "management-agent.jar")]
+		    (.loadAgent vm agent)
+		    (.getProperty (.getAgentProperties vm) "com.sun.management.jmxremote.localConnectorAddress")))]
+      {:connector (JMXConnectorFactory/connect (JMXServiceURL. address))
+       :vmname vmname
+       :host (. (. InetAddress getLocalHost) getCanonicalHostName)}))
+
 (defn create-mbean-connector
   "Returns a structure used to connect to a jmx server"
   ([host port vmname]
@@ -81,6 +102,7 @@
 	 (create-mbean-connector port-or-host vmname-or-port (vmname)))))
   ([port]
      (create-mbean-connector (remote-hostname) port (vmname))))
+
 
 
 (defn adress-of-mbean-connection 

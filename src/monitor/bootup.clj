@@ -21,7 +21,16 @@
 	     (println "You need to supply a listener port")))
 	 (when (= "jmx" (first line))
 	   (jmx-probe (rest line)))
+	 (try
+	 (when (= "threadsfile" (first line))
+	   (apply read-threads-to-file (rest line)))
 	 (when (= "threads" (first line))
-	   (read-threads (rest line))))
+	   (apply read-threads (rest line)))
+	 (when (= "importthreadsfile" (first line))
+	   (apply import-threads-file (rest line)))
+	 (catch IllegalArgumentException e
+	   (println (.getMessage e))))
+	 (when (= "gui" (first line))
+	   (new-window true (second line) (nth line 2)))) 
 	   
      (new-window true))))

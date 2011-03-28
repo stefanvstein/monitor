@@ -107,8 +107,8 @@
 		     (serve-clients client-transfer-port client-port terminating?
 				    (serve))))
      (info "Done"))
-  ([live-minutes history-days history-directory client-port]
-     (in-env live-minutes history-days history-directory client-port 0))
+  ([history-days history-directory client-port jmx-port]
+     (in-env 65 history-days history-directory client-port jmx-port))
   ([history-days history-directory client-port]
      (in-env 65 history-days history-directory client-port 0)))
 

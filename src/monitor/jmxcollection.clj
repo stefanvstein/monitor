@@ -43,7 +43,7 @@
 
 									 [{:category "GarbageCollector"
 									   :counter "Count"
-									   :instance name
+									   :section name
 									   :jvm (vmname)
 									   :host (remote-hostname)}
 									  (.getValue #^Attribute the-attribute)]))))
@@ -54,7 +54,7 @@
 								       (when-let [name (some (fn [#^Attribute a] (when (= "Name" (.getName a)) (.getValue a))) attributes)] 
 								       [{:category "GarbageCollector"
 									:counter "Time"
-									:instance name
+									:section name
 									:jvm (vmname)
 									:host (remote-hostname)}
 									(/ (.getValue #^Attribute the-attribute) 1000.0)]))))
@@ -287,6 +287,7 @@
 	thread-beans (thread-bean (mbean-server))
 	pid (remote-pid)
 	percent-of-heap (fn percent-of-heap [col-vals the-time]
+;			  (println "******")
 			  (doseq [per-heap (partition-by #(:instance (key %)) (sort-by #(:instance (key %)) col-vals))]
 			    (let [commited-and-max (sort-by #(:counter (key %))
 							    (filter #(and (= "Latest" (:section (key %)))
@@ -294,19 +295,21 @@
 									      (= "Committed After Last" (:counter (key %)))
 									      (= "Usage After Last" (:counter (key %)))))
 								    per-heap))]
+;			      (println commited-and-max)
 			      (when (= 3 (count commited-and-max))
 				(when-not  (some nil? (vals commited-and-max))
 				  (let [committed (val (first commited-and-max))
 					max (val (second commited-and-max))
 					usage (val (nth commited-and-max 2))]
-				    (when-not (or (zero? max) (zero? usage))
+				    ;(when-not (or (zero? max) (zero? usage))
+;				      (println "Not zero")
 				      (*add* (assoc (key (first commited-and-max)) :pid pid :counter "% Committed after Last")
 					     the-time
 					     (* 100.0 (/ committed max)))
 				      (*add* (assoc (key (first commited-and-max)) :pid pid :counter "% Usage after Last")
 					     the-time
 					     
-					     (* 100.0 (/ usage committed))))))))))]
+					     (* 100.0 (/ usage committed)))))))))]
     (while (not (stop-fn))
 	   (let [the-time (remote-time)]
 	     (let [cv (collector-values collector-fns (mbean-server))]
@@ -351,8 +354,9 @@
   ([stop-fn]
   (let [thread-beans (thread-bean (mbean-server))
 	pid (remote-pid)]
-	
+    (println "Yiehaa")	
     (while (not (stop-fn))
+      (println "Moo")
 	   (let [the-time (remote-time)]
 	     	       (dorun (map (fn [i]  
 			     (*add* (assoc (key i) :pid pid) the-time (val i))) 

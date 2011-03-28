@@ -92,6 +92,9 @@
 			  (raw-names from# to#))
 		(add [name data]
 		     (add-external-data name data))
+		(addWide [data]
+			 (doseq [d data]
+			   (add-external-data (key d) (val d))))
 		(ping [])
 		))
 
