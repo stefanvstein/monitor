@@ -24,6 +24,21 @@
   Gamla recmans stängs automatiskt, för att inte ta upp cache ?
   )
 
+(defn compare-first [a b] (compare (first a) (first b)))
+(defn interleave-sorted [compare-fn & ss]
+  (when-let [seqs (into #{} (filter identity (map #(seq %) ss)))]
+    (let [comp-fn (fn [a b] (compare-fn (first a) (first b)))
+	  f (fn f [seqs]
+	      (let [with-smallest (second (first (sort comp-fn (map (fn [e] [(first e) e]) seqs))))
+		    smallest-value (first with-smallest)
+		    remaining-seqs (if-let [rem (next with-smallest)]
+				     (conj (disj seqs with-smallest) rem)
+				     (disj seqs with-smallest))]
+		(if (seq remaining-seqs)
+		  (lazy-seq (cons smallest-value (f remaining-seqs)))
+		  (list smallest-value))
+	       ))]
+    (f seqs))))
 
 (defprotocol DayAsInt
   (as-int [this]))
@@ -118,9 +133,24 @@
 (defn- allow-writes [day-struct browser]
   (dosync (alter (:browser-recid day-struct) dissoc browser)))
 
-(defn- browse
+(defn tuple-browser-seq [tuple-browser]
+  (let [f (fn f [prev]
+	    (let [t (Tuple.)]
+	      (if (.getNext tuple-browser t)
+		(lazy-seq (cons [(.getKey prev) (.getValue prev)] (f t)))
+		(list [(.getKey prev) (.getValue prev)]))))
+	t (Tuple.)]
+    (when (.getNext tuple-browser t)
+      (f t))))
+	
+  
+
+(defn- browse [day-struct browser ids]
+  (let [seqs (map (fn [id] (tuple-browser-seq (.browse (BTree/load (:recman day-struct) id)))) ids)]
+    (apply interleave-sorted compare-first seqs)))
+
+#_(defn- browse
   [day-struct browser ids]
-  (println "ids" ids)
   (let [f (fn f [jdbm-browser ids]
 	    (let [tuple (Tuple.)]
 	      (if (.getNext jdbm-browser tuple)
@@ -260,17 +290,21 @@
 	 (allow-writes day-struct this))
   clojure.lang.Seqable
   (seq [this]
-       (println ids) 
        (browse day-struct this ids)))
 
  
 (defn- browser-for-ids [day-struct ids]
-  (Browser. day-struct ids))
+  (let [b  (Browser. day-struct ids)]
+    (doseq [id ids]
+      (prevent-conc-writes day-struct b id))
+    b))
+    
+ 
 
 (defn browser [day-struct keys]
   (let [name-and-ids (fn [d] @(:name-ids d))
 	ids (get (name-and-ids day-struct) keys)]
-    (println ids)
+
     (browser-for-ids day-struct ids)))
 
 (defn days-with-data [])
@@ -332,7 +366,6 @@
 
 ;Part of this should be a member of day
 (defn- create-new-data-id [db-struct time tname] ;This may overwrite any existing recid for this name!!!!
-  (println "inserting for" tname)
   (using-day db-struct time
 	     (let [day (date-as-day time)
 		   btree (BTree/createInstance (:recman *day*))
@@ -364,12 +397,8 @@
 				id
 				(create-new-data-id db-struct day keys))
 			      (finally (.unlock (:lock *day*))))))]
-		 (println "Id is" id)
 		 (writing *day* keys id
 			  (try
-			    (println *btree* "id" (.getRecid *btree*))
-			    (println time)
-			    (println value)
 			    (.insert *btree* (.getTime time) value true)
 			    (catch IOException e
 			      (println "Couldn't write" time value))))))))
@@ -396,7 +425,7 @@
 ;      (println "dayname-days" @(:dayname-days db)) 
       (println "Returning last 20110101")
       (return-day db 20110101)
-            (println "day-users" @(:day-users db))
+            ;(println "day-users" @(:day-users db))
 ;      (println "unused-days"  @(:unused-days-lru db))
 ;      (println "dayname-days" @(:dayname-days db)) 
 
@@ -462,31 +491,34 @@
 		 ;(doseq [v (apply browse db *day* (get (names-and-ids db date) name))]
 		  ; (println (Date. (first v)) "==" (second v)))
 		 (println "Using browser")
-		 (doseq [v (browser *day* name)];(apply browser *day* (get (names-and-ids db date) name))]
-		   (println (Date. (first v)) "==" (second v)))
+		 (with-open [b (browser *day* name)]
+		   (doseq [v b];(apply browser *day* (get (names-and-ids db date) name))]
+					;(println (Date. (first v)) "==" (second v)))
+		     (println (first v) "==" (second v))))
 		 (println @(:name-ids *day*))
+		 (doseq [t (tuple-browser-seq (.browse (BTree/load (:recman *day*) (first (val (first @(:name-ids *day*)))))))]
+		   (println t))
+		 (doseq [t (apply interleave-sorted compare-first [(tuple-browser-seq (.browse (BTree/load (:recman *day*) (first (val (first @(:name-ids *day*)))))))])]
+		   (println t))
 		 (is (= 1 (count @(:name-ids *day*))))
 		 (is (= 1 (count (val (first  @(:name-ids *day*))))))
 		 (is (empty? @(:browser-recid *day*)))
 		 (is (empty? @(:writter-recid-latches *day*)))
 
-		 (let [b (browser *day* name)];(apply browser *day* (get (names-and-ids db date) name))]
-		   (is (= 0 (count @(:browser-recid *day*))))
-		   (rest b) ;Requires a walk
+		 (with-open [b (browser *day* name)];(apply browser *day* (get (names-and-ids db date) name))]
 		   (is (= 1 (count @(:browser-recid *day*))))
 		   (is (= (get @(:browser-recid *day*) b) (first (val (first  @(:name-ids *day*))))))
 		   (.close b)
 		   (is (= 0 (count @(:browser-recid *day*)))))
-		 (let [b (browser *day* name);(apply browser *day* (get (names-and-ids db date) name))
-		       first-id ( first (val (first  @(:name-ids *day*))))]
-		   (first b) ;make a walk to become a real browser
-		   (add-to-db db 42 (Date. (+ 3000 (.getTime date))) name)
-		   (is (= 1 (count @(:browser-recid *day*))))
-		   (is (= 2 (count (val (first  @(:name-ids *day*))))))
-		   (is (= first-id (first (val (first  @(:name-ids *day*))))))
-		   (is (= (map #(second %) b) [32 37]))
-		   (is (= (map #(second %) (browser *day* name));(apply browser *day* (get (names-and-ids db date) name))
-			        [32 37 42])) 
+		 (with-open [b (browser *day* name)];(apply browser *day* (get (names-and-ids db date) name))
+		      (let [first-id ( first (val (first  @(:name-ids *day*))))]
+			(add-to-db db 42 (Date. (+ 3000 (.getTime date))) name)
+			(is (= 1 (count @(:browser-recid *day*))))
+			(is (= 2 (count (val (first  @(:name-ids *day*))))))
+			(is (= first-id (first (val (first  @(:name-ids *day*))))))
+			(is (= (map #(second %) b) [32 37]))
+			(is (= (map #(second %) (browser *day* name));(apply browser *day* (get (names-and-ids db date) name))
+			        [32 37 42])) )
 		   )))))
 
 		  
