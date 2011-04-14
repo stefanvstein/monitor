@@ -1,6 +1,6 @@
 (ns monitor.db
   (:use cupboard.bdb.je)
-  (:use cupboard.utils)
+ ; (:use cupboard.utils)
   (:use [clojure stacktrace test])
   (:use monitor.tools)
   (:import java.text.SimpleDateFormat)
@@ -589,7 +589,8 @@
 
 
 (deftest test-read-and-write
-  (let [tmp (make-temp-dir)
+  (with-temp-dir
+  (let [;tmp (temp-dir)
 	df (SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)
 	get-values (fn [e] (reduce (fn [a b]
@@ -601,8 +602,7 @@
 	key3 {:saft "skalle"}
 	day1 20101123
 	day2 20101124]
-    (try
-      (using-db-env tmp
+      (using-db-env *temp-dir*
 		    
 		    (is (nil? (get-from-db get-values day1 key1)))
 		    (add-to-db 3 (dparse "20101123 012233") key1)
@@ -641,5 +641,5 @@
 		    (remove-date day1)
 		    (is (= {(dparse "20101124 012234") 3}
 			   (get-from-db get-values day2 key1)))
-		    )
-      (finally  (rmdir-recursive tmp)))))
+		    ))))
+

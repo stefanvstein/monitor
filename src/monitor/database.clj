@@ -2,7 +2,7 @@
   (:use [monitor db mem tools])
   (:use clojure.test)
   (:use clojure.contrib.logging)
-  (:use cupboard.utils)
+;  (:use cupboard.utils)
   (:import (java.util Date Calendar)))
 
 "A wrapper around live data and persistent store"
@@ -169,7 +169,8 @@
 	   (data-by-i lower upper matching))))
 
 (deftest test-unfiltered
-    (let [tmp (make-temp-dir)
+   (with-temp-dir
+    (let [;tmp (make-temp-dir)
 	  df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	  dparse #(. df parse %)
 	  as-map (fn [fns-for-names]
@@ -182,8 +183,8 @@
 				  (a-fn #(.put values (first %) (second %))))))
 			    result))]
 		
-    (try
-      (using-history tmp
+
+      (using-history *temp-dir*
 		     (add-data {:host "Arne"} (dparse "20100111 100000")  32)
 		     (add-data {:host "Arne"} (dparse "20100111 100002")  33)
 		     (add-data {:host "Arne"} (dparse "20100111 100003")  34)
@@ -206,8 +207,8 @@
 			       {:host "Bertil"} {(dparse "20100111 120000")  32
 							  (dparse "20100111 120002")  33
 							  (dparse "20100111 120003")  34}}
-			      (as-map fns-for-names)))))
-      (finally (rmdir-recursive tmp)))))
+			      (as-map fns-for-names))))))))
+
 
 
 
@@ -237,13 +238,12 @@
 
 
 (deftest test-names-where-one
-
-  (let [tmp (make-temp-dir)
-	df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
+  (with-temp-dir
+  (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)]
     (try
      (using-live 
-      (using-history tmp
+      (using-history *temp-dir*
 		     (add-data {:host "Arne"} (dparse "20100111 100000")  32)
 		     (let [result (names-where 
 					       (dparse "20100111 000000") 
@@ -270,19 +270,19 @@
 		     (let [result (names-where 
 				   (dparse "20100111 000000") 
 				   (dparse "20110111 235959"))]
-		       (is (nil? (first result))))))
+		       (is (nil? (first result))))))))))
 
       
-     (finally  (rmdir-recursive tmp)))))
+
 
 
 (deftest test-remove
-  (let [tmp (make-temp-dir)
-	df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
+  (with-temp-dir
+  (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)]
-    (try
+
      (using-live 
-      (using-history tmp
+      (using-history *temp-dir*
 		     (let [baseDate (.getTime (dparse "20100111 100000"))]
 		       ;(println (str "Start " (java.util.Date.)))
 		       (loop [i 0]
@@ -294,17 +294,17 @@
 		       ;(println (str "Cleaning " (java.util.Date.)))
 		       (clean-stored-data-older-than (dparse "20100112 100000")))
 		       ;(println (str "Done " (java.util.Date.)))
-)) (finally  (rmdir-recursive tmp)))))
+)) )))
 
 
 (deftest test-names-where-many
-;  (println "Running commented")
-  (let [tmp (make-temp-dir)
-	df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
+					;  (println "Running commented")
+  (with-temp-dir
+  (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
 	dparse #(. df parse %)]
-    (try
+   
      (using-live 
-      (using-history tmp
+      (using-history *temp-dir*
 		     (add-data {:host "Arne"} (dparse "20100111 100000")  32)
 		     (add-data {:host "Bertil"} (dparse "20100111 110000")  33)
 		     (add-data {:host "Cesar"} (dparse "20100111 120000")  34) 
@@ -326,9 +326,9 @@
 		     (let [result (names-where (fn [el] 
 						 (= (:category el) "Silja")))]
 		       (is (= #{{:host "Arne" :category "Silja"}}  (set result)) 
-			   "Only the Arne with Silja in live" ))))
+			   "Only the Arne with Silja in live" )))))))
      
-     (finally  (rmdir-recursive tmp)))))
+
 (comment
 (deftest test-live-only
   (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")

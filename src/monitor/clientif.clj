@@ -8,7 +8,6 @@
   (:use (clojure stacktrace test))
   (:use [clojure.contrib import-static])
   (:use (monitor database calculations tools))
-  (:use cupboard.utils)
   (:use [clojure.contrib.logging :only [info error]]))
 
 (import-static java.util.Calendar YEAR MONTH DAY_OF_MONTH HOUR_OF_DAY MINUTE SECOND MILLISECOND)
@@ -160,7 +159,7 @@
 (deftest test-raw-persistent
  (let [df (java.text.SimpleDateFormat. "yyyyMMdd HHmmss")
        dparse #(. df parse %)
-       tmp (make-temp-dir)
+       tmp (temp-dir)
        stop-signal (atom false)
        stop #(deref stop-signal)]
 
@@ -195,7 +194,7 @@
 				 {(dparse "20100101 100002") 2.0}}))
 			 ))))
      
-     (finally (rmdir-recursive tmp)
+     (finally (rm tmp)
 	      (swap! stop-signal (fn [_] true))
 	      (Thread/sleep 1200)
 	      (clean-live-data-older-than (dparse "19700101 010101"))))))
@@ -236,7 +235,7 @@
 	dparse #(. df parse %)
 	stop-signal (atom false)
 	stop #(deref stop-signal)
-	tmp (make-temp-dir)]
+	tmp (temp-dir)]
     (try
       (using-history tmp
 		     (using-live
@@ -265,7 +264,7 @@
 		      ))))
       (finally (swap! stop-signal (fn [_] true))
 	       (Thread/sleep 1200)
-	       (rmdir-recursive tmp)))))
+	       (rm tmp)))))
 
 
 
