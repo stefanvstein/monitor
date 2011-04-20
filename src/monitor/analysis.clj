@@ -33,7 +33,8 @@
     [d2 d1]))
 
 (defn- update-chart [chart]
-  (SwingUtilities/invokeLater (fn [] 
+
+  (SwingUtilities/invokeLater (fn []
 				(let [r (.getRenderer (.getPlot chart))
 				      rc (RendererChangeEvent. r true)]
 				  (.notifyListeners r rc)))))
@@ -169,23 +170,25 @@
 					    r)))
 
 	updatechart (fn [data]
-		      (let [d (remove-with-empty-cols-as-val data)]
-			(when d
-			  (swap! data-queue conj d))
-			(SwingUtilities/invokeLater
-			 
-			 (fn []
-			   #(.setText status-label (str "Rendering "))
-			   (stime "gui rendering"
-			   (stop-chart-notify)
-			   (try
-			     (let [datas (into [] (take 10 @data-queue))]
-			       (when-not (zero? (count datas))
-				 (swap! data-queue (fn [dq] (vec (drop (count datas) dq))))
-			   
-				 (doseq [data datas]
-				   (dorun (map (fn [data]
-					       (let [data-key (let [dk (assoc (key data) :type func-string)]
+;		      (let [d (remove-with-empty-cols-as-val data)]
+;			(when d
+                      (swap! data-queue conj data)
+                      (SwingUtilities/invokeLater
+                       
+                       (fn []
+                                        ;#(.setText status-label (str "Rendering "))
+                         
+
+                                
+                                  (let [datas (into [] @data-queue)]
+                                    (when-not (zero? (count datas))
+                                      (swap! data-queue (fn [dq] (vec (drop (count datas) dq))))
+                                      (stop-chart-notify)
+                                      (try
+                                        ;(doseq [data datas]
+                                        (let [data (last datas)]
+                                        (dorun (map (fn [data]
+                                                      (let [data-key (let [dk (assoc (key data) :type func-string)]
 								(if (= 0 shift)
 								  dk
 								  (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
@@ -249,10 +252,10 @@
 						 (binding [*stime* false] (stime "addAndOrUpdate" (.addAndOrUpdate time-serie new-serie)))))
 					       data)))
 
-				  ))
+				  
 		       (catch Exception e
 			 (.printStackTrace e))
-		       (finally   (stime "notify" (start-chart-notify))))))   )))]
+		       (finally (start-chart-notify))))))))]
     
     (future
      
@@ -265,21 +268,22 @@
 	(let [days (full-days-between from to)
 	      alldata (atom {})]
 	  (swap! num-to-render (fn [d] (+ d (count days))))
-
-	  (stime "retrieve and merge" (dorun (map (fn [ e ]
-						    (swap! alldata (fn [a] (reduce (fn [r l]
-										     (if-let [current (get r (key l))]
-										       (assoc r (key l) (merge current (val l)))
-										       (assoc r (key l) (val l))))
-										   a
-										   (shift-time (get-data (first e)
-													  (second e)
-													  name-values
-													  server))))))
-						  days)))
-	  (let [res (stime "transform" (reduce (fn [r e]
-						 (assoc r (key e) (transform (val e) func-string))) {} @alldata))]
-	    (updatechart res)))
+                                        ;          (println "all-names" all-names)
+           (doseq [nv (according-to-specs all-names [(apply hash-map name-values)])]
+             (dorun (map (fn [ e ]
+                           (swap! alldata (fn [a] (reduce (fn [r l]
+                                                            (if-let [current (get r (key l))]
+                                                              (assoc r (key l) (merge current (val l)))
+                                                              (assoc r (key l) (val l))))
+                                                          a
+                                                          (shift-time (get-data (first e)
+                                                                                (second e)
+                                                                                (reduce #(conj %1 (key %2) (val %2)) [] nv)
+                                                                                server))))))
+                                days))
+             (let [res (reduce (fn [r e]
+						 (assoc r (key e) (transform (val e) func-string))) {} @alldata)]
+	    (updatechart res))))
 	(finally
 	(SwingUtilities/invokeLater (fn []
 ;				      (when (= @num-rendered @num-to-render)

@@ -43,6 +43,7 @@
 	(recur (rest files) (+ size (.length file))))
       size)))
 
+;if there are duplicates, pick the one from the latest ss
 (defn interleave-sorted
   "Lazy interleave of seqs that are expect to be sorted. The result is interleaved accoring to the sorted order, accoring to compare-fn. Each seq is expected to be sorted according to compare-fn"  
   [compare-fn & ss]

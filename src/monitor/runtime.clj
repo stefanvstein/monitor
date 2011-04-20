@@ -23,12 +23,6 @@
 
 (declare get-new-data)
 
-(defn- according-to-specs [names specs]
-  (into #{}
-	(filter identity
-		(for [name names spec specs]
-		  (when (= spec (select-keys name (keys spec)))
-		    name)))))
 
 (def types ["Raw" "Average" "Mean" "Change/Second" "Change/Minute"])
 
@@ -104,7 +98,7 @@
 	panel (JPanel.)
 
 	axis-bottom (AxisLinear.)
-		      
+
 		      ]
     (.addWindowListener frame (proxy [WindowAdapter] []
 			       (windowClosed [e] 
@@ -149,7 +143,7 @@
 	      (.setOrientation JSplitPane/VERTICAL_SPLIT)
 	      (.setName "splitPane")
 	      (.setBottomComponent (doto (JScrollPane.)
-				    
+
 				   (.setViewportView (doto table
 						       (.setDefaultRenderer 
 							Color 
@@ -282,9 +276,12 @@
 						  (let [trace (new-trace a-name)]
 						    (alter name-trace assoc a-name trace)
 						    trace)))
-					 
-					
+
+
 					 data (get-data-for a-name)]
+                                     #_(println "updating" a-name (if (seq data)
+                                                                  (str "true" (last data))
+                                                                  "false")  )
 				     (.removeAllPoints trace)	
 				     (when (seq data)
 				       (doseq [d  (simple-data-with-doubles data)]
@@ -304,14 +301,14 @@
 
 	    (if (> diff  t30s )
 	      ((:set-value (:table-model contents)) (key e) "")))) )
-		    
-				
+
+
       #_(doseq [to-remove (difference (set (keys @name-trace)) (into #{} (for [n  updated-names]
 									(first n))))]
 	((:remove-row contents) to-remove))
 
       )))
-	      
+
 
 (defn runtime-add-dialog [contents server]
   (let [dialog (JDialog. (SwingUtilities/windowForComponent (:panel contents)) "Add" false)
@@ -337,7 +334,9 @@
 													%)
 												     removed)))) 
 			  (swap! (:watched-specs contents) conj name-values-with-type)
-			  (get-new-data server)
+                          #_(println "removed names" @(:removed-names contents))
+                          #_(println "watched-specs" @(:watched-specs contents))
+			  (future (get-new-data server name-values))
 			  ))]
     (.setBorder centerPanel (BorderFactory/createEmptyBorder 10 10 10 10))
     (let [close-listener (proxy [ActionListener] [] (actionPerformed [event] (.dispose dialog)))
@@ -392,7 +391,7 @@
 					    (sorted-set) (val a-name))]
 			  (dorun (map (fn [el] (. comboModel addElement el)) toadd)))  
 			(. combo setName field-name)
-			
+
 			(. centerPanel add label (GridBagConstraints. 
 						  0 GridBagConstraints/RELATIVE 
 						  1 1 
@@ -415,7 +414,7 @@
 		    names))
 	(let [combo-action (create-comboaction @combomodels-on-center @combos-on-center [add-to-new-button add-button] names)]
 	  (dorun (map (fn [combo] (.addActionListener combo combo-action)) @combos-on-center)))
-				
+
 	))
     dialog))
 
@@ -424,8 +423,8 @@
     (update-table-and-graphs rt)))
 
   
-  (defn get-new-data [server]
-  ;(setXRange)
+(defn get-new-data [server dbdesc]
+                                        ;(setXRange)
   (try
     (let [raw-type (first types)
 	  transformations-according-to-specs (fn [data specs]
@@ -445,17 +444,47 @@
 			  @runtimes)
 	  non-raw-specs (filter #(when-not (= (:type %) raw-type)
 				   %) all-specs)
-	
+
 	  names-of-interest-now  (according-to-specs (reduce (fn [result a-map]
 							       (conj result (names-as-keyworded a-map))) [] (.rawLiveNames (server)))
 						     (without-type all-specs))
-	  data (with-type-added raw-type (get-data names-of-interest-now server))]
-      (when (seq data)
-	(let [data (merge data (transformations-according-to-specs data non-raw-specs))]
-	 (reset! all-runtime-data data)))
-	  
-	    (if (SwingUtilities/isEventDispatchThread)
-	      (update-runtime-data)
-	      (SwingUtilities/invokeAndWait update-runtime-data)))
+          dut (let [data (get-data names-of-interest-now server)]
+                (if dbdesc
+                  (reduce (fn [r e]
+                            #_(println "About to retrieve" e)
+                            (let [ol-data (get-data (Date. (- (System/currentTimeMillis) (* 60 60 1000)))
+                                         (Date. (+ (System/currentTimeMillis) (* 60 60)))
+                                         (reduce #(conj %1 (key %2) (val %2)) [] e)
+                                         server)]
+;                              (println "Got" ol-data)
+                              (reduce #(update-in %1 [(key %2)] (fn [e] (merge e (val %2)))) r ol-data)))
+                          data
+                          (according-to-specs names-of-interest-now [dbdesc]))
+                  data))
+          data (with-type-added raw-type dut)]
+
+      (doseq [a-data (seq data)]
+        (let [data {(key a-data) (val a-data)}]
+;        (println "dut" dut)
+        
+;        (println "data" data)
+	(let [transformed-data (transformations-according-to-specs data non-raw-specs)
+              data (merge data transformed-data)]
+          #_(println (with-out-str
+                     (doseq [e data]
+                     (print (key e))
+                     (print (last (val e))))))
+
+                                        ;         (println "transformed data" transformed-data)
+          (doseq [d data]
+            (swap! all-runtime-data (fn [rtd]
+                                        ; (println "Data is" data)
+                                      (if (contains? rtd (key d))
+                                        (update-in rtd [(key d)] #(merge % (val d)))
+                                        (assoc rtd (key d) (val d)))))))))
+
+      (if (SwingUtilities/isEventDispatchThread)
+        (update-runtime-data)
+        (SwingUtilities/invokeAndWait update-runtime-data)))
   (catch Exception e
     (.printStackTrace e))))

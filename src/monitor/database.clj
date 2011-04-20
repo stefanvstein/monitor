@@ -1,5 +1,5 @@
 (ns monitor.database
-  (:use [monitor db mem tools])
+  (:use [monitor newdb mem tools])
   (:use clojure.test)
   (:use clojure.contrib.logging)
 ;  (:use cupboard.utils)
@@ -47,7 +47,7 @@
 (defn clean-stored-data-older-than
   [timestamp]
   {:pre [(instance? java.util.Date timestamp)]}
-  (let [until (day-as-int timestamp)  
+  (let [until (date-as-day timestamp)  
 	dates-to-remove (filter (fn [adate] (> until adate)) (days-with-data))]
     
     (dorun (map (fn [a-date] 
@@ -57,7 +57,7 @@
 (defn compress-older-than [timestamp, termination-pred]
   {:pre [(instance? java.util.Date timestamp)]}
   
-  (let [until (day-as-int timestamp)  
+  (let [until (date-as-day timestamp)  
 	dates-to-compress (filter (fn [adate] (> until adate)) (days-with-data))]
     (info (str "About to compress data older than " until))
     (doseq [a-date dates-to-compress]
@@ -92,7 +92,7 @@
 				    (apply conj result-set names-for-a-day)))
 				#{}
 				(map (fn [day]
-				       (names (day-as-int day)))
+				       (names (date-as-day day)))
 				     (day-seq lower upper))))]
 	   res))))
 
@@ -110,14 +110,15 @@
 	  ]
       (reduce (fn [r combination]
 		(let [name (second combination)
-		      day (day-as-int (first combination))
+		      day (date-as-day (first combination))
 		      fns-for-this-name (if-let [t (get r name)]
 					  t
 					  [])]
 		  (assoc r name (conj fns-for-this-name
 				      (fn [a-fn]
 					(let [call-if-within (fn [time-values]
-							   (doseq [tv (filter
+                                                               
+                                                               (doseq [tv (filter
 								      (fn [a-tv]
 									(let [timestamp-long (.getTime #^java.util.Date (first a-tv))]
 									  (and (> timestamp-long lower-long)
@@ -139,7 +140,7 @@
      (data-by-i pred))
   ([#^Date lower #^Date upper & name-spec]
      (let [days (day-seq lower upper)
-	   numes (fn [day] (let [t (day-as-int day)
+	   numes (fn [day] (let [t (date-as-day day)
 				 data [t (names t)]]
 			     data))
 	   spec-map (reduce #(assoc %1 

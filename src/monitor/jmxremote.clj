@@ -24,6 +24,7 @@
 	 (try
 	   (locking (second reader-writer)
 	     (.write #^Writer (second reader-writer) to-write 0 (count to-write))
+             (.flush #^Writer (second reader-writer))
 ;	     (.write (second reader-writer) " " 0 1)
 					;	     (.flush (second reader-writer))
 	     )

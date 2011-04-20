@@ -10,6 +10,14 @@
 
 (import-static java.util.Calendar MINUTE SECOND)
 
+(defn according-to-specs [names specs]
+  (into #{}
+	(filter identity
+		(for [name names spec specs]
+		  (when (= spec (select-keys name (keys spec)))
+		    name)))))
+
+
 (def new-window-fn (atom (fn [_])))
 
 (defn color-cycle []
@@ -110,7 +118,9 @@
 	;	  (assoc result (names-as-keyworded (key a-data)) (merge (sorted-map) (transform (val a-data) func-string)))) 
 					;	{} data))
 	 
-     (catch Exception e  (throw e)))))
+       (catch Exception e
+         (println "Got exception" (class e))
+         (throw e)))))
 
 (defn create-table-model [remove-graph-fn recolor-graph-fn] 
   "rows and columns is expected to be atom []. Column 0 is expected to be a color"

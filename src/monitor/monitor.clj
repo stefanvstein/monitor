@@ -108,9 +108,9 @@
 				    (serve))))
      (info "Done"))
   ([history-days history-directory client-port jmx-port]
-     (in-env 65 history-days history-directory client-port jmx-port))
+     (in-env 1 history-days history-directory client-port jmx-port))
   ([history-days history-directory client-port]
-     (in-env 65 history-days history-directory client-port 0)))
+     (in-env 1 history-days history-directory client-port 0)))
 
 
 

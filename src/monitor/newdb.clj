@@ -7,7 +7,7 @@
   (:import (java.util.concurrent TimeUnit CountDownLatch))
   (:import (java.util.concurrent.locks ReentrantLock))
   (:import (java.text SimpleDateFormat))
-  (:import (java.io IOException File FilenameFilter RandomAccessFile))
+  (:import (java.io IOException File FilenameFilter RandomAccessFile FileFilter))
   (:import (java.nio.channels OverlappingFileLockException))
   (:import (jdbm RecordManagerFactory RecordManager))
   (:import (jdbm.btree BTree))
@@ -33,6 +33,8 @@
   This means that we only care about locking the last recid. All browser locks are cleared when a new writer recid is created
   Browser will leave browse lock if not browsed to end. Does this mean that each client should be able to manually delete its locks- Cumbersome since browsing is made through seq. Perhaps a lock should contain a id to its user, Invalidating browsers when released, or when client leaves the database. Guess that a browser should be something more advanced, being a seqable that is also closeable, Either autoclosed on end, or able to follow writes in rt.  )
 
+;For compatibility, this is set when using-db-env
+(def *db-env* (atom nil)) ;I know this does qualify for ear mufs
 
 (defn- read-name-ids
   "Returns a map of names and seq of ids using a record manager and belonging BTrees primaryid-name and primary-ids"
@@ -70,11 +72,13 @@
 	    browsers (ref {})
 	    latches (ref {})
 	    closed (atom false)
-	    deleted (atom false)]
+	    deleted (atom false)
+            lock (java.util.concurrent.locks.ReentrantLock.)]
 	
 	{:name day
 	 :recman r
-	 :lock (java.util.concurrent.locks.ReentrantLock.)
+         :uncommitted-inserts (atom 0)
+	 :lock lock
 	 :primary-name-tree primary-name-tree
 	 :primary-ids-tree primary-ids-tree
 	 :name-ids (ref name-ids)
@@ -82,7 +86,9 @@
 	 :writter-recid-latches latches
 	 :closed closed
 	 :deleted deleted
-	 :close (fn close-day [] 
+	 :close (fn close-day []
+                  (.lock lock)
+                  (try
 		  (reset! closed true) 
 		  (doseq [br @browsers]
 		    (println "Closing browser")
@@ -98,18 +104,21 @@
 		    (.close ^RecordManager r)
 		    (catch IOException e
 		      (println "Could not close" day " " (.getMessage e))))
-		  )})))
+		  (finally (.unlock lock))))})))
 
 
-
+(def get-day-lock (Object.))
 (defn- get-day 
   "Returns a day-struct for a day. Loading it if not found in memory"
   [db-struct day]
+  (locking get-day-lock
   (let [old-dayname-days (:dayname-days db-struct)]
     (loop [retries 0]
       (or (get @old-dayname-days day)
 	  (let [a-new-day (try
-			    (new-day (:path db-struct) day)
+			    (let [r (new-day (:path db-struct) day)]
+                              (dosync (alter (:existing-days db-struct) conj day))
+                              r)
 			    (catch IOException e e))]
 	    (if (instance? Exception a-new-day)
 	      (if (< 100 retries)
@@ -120,11 +129,11 @@
 	      (dosync (if (get @old-dayname-days day)
 			(throw (IllegalStateException. "Huh? Got some other day while one was created by me"))
 			(do (alter old-dayname-days assoc day a-new-day)
-			    a-new-day)))))))))  
+			    a-new-day)))))))))  )
 
 (defn use-day
   "Return a day-struct, and registering it as being in use, preventing it from being closed"
-  [db-struct date]
+  ([db-struct date]
   (let [day (date-as-day date)
 	day-struct (get-day db-struct day)
 	day-users (:day-users db-struct)
@@ -135,6 +144,11 @@
 					     (assoc du day 1))))
      (alter unused-days-lru (fn [unused] (into [] (filter #(not= day %) unused))))) 
     day-struct))
+  ([db-struct date dont-create]
+     (if (and dont-create (not (contains? @(:existing-days db-struct) (date-as-day date))))
+       nil
+       (use-day db-struct date))))
+         
 
 
 (defn return-day
@@ -171,8 +185,6 @@
 				   du))))
 
       (doseq [me @to-close]
-	(println me)
-	
 	((:close (val me)))))))
 
 
@@ -197,12 +209,13 @@
 
 (defn tuple-browser-seq
   "Returns a Lazy seq of browsing using a tuple browser"
-  [^TupleBrowser tuple-browser]
+  [^TupleBrowser tuple-browser day-struct]
   (let [f (fn f [^Tuple prev]
-	     (let [t (Tuple.)]
-	      (if (.getNext tuple-browser t)
-		(lazy-seq (cons [(.getKey prev) (.getValue prev)] (f t)))
-		(list [(.getKey prev) (.getValue prev)]))))
+            (let [t (Tuple.)]
+              (let [status (try (.getNext tuple-browser t))] 
+                  (if status
+                    (lazy-seq (cons [(.getKey prev) (.getValue prev)] (f t)))
+                    (list [(.getKey prev) (.getValue prev)])))))
 	t (Tuple.)]
     (when (.getNext tuple-browser t)
       (f t))))
@@ -211,9 +224,9 @@
 (defn- browse
   "Interleaved browsing using a set of btrees, identified by ids. Elements turn up in key order, independent of BTree."
   [day-struct browser ids] 
-   (let [seqs (map (fn [id] (tuple-browser-seq (.browse (BTree/load (:recman day-struct) id)))) ids)
+   (let [seqs (map (fn [id] (tuple-browser-seq (.browse (BTree/load (:recman day-struct) id)) day-struct)) ids)
 	compare-first (fn [a b] (compare (first a) (first b)))]
-     (apply interleave-sorted compare-first seqs)))
+     (map (fn [e] [(Date. ^Long (first e)) (second e)]) (apply interleave-sorted compare-first seqs))))
 
 ;"A Browser id seqable and closeable. Browsing is aborted when closed"
 (deftype Browser 
@@ -224,12 +237,16 @@
 			    (browse day-struct this ids)))
 
 
-(defn browser [day-struct keys]
-  (let [name-and-ids (fn [d] @(:name-ids d))
-	ids (get (name-and-ids day-struct) keys)
-	b  (Browser. day-struct #(allow-writes day-struct %1) ids)]
-    (prevent-conc-writes day-struct b (fn [] false) ids)
-    b))
+(defn browser [db-struct date keys]
+  
+  (let [date (date-as-day date)
+        day (use-day db-struct date true)]
+    (when day
+      (let [name-and-ids (fn [d] @(:name-ids d))
+            ids (get (name-and-ids day) keys)
+            b  (Browser. day #(do (allow-writes day %1) (return-day db-struct date)) ids)]
+        (prevent-conc-writes day b (fn [] false) ids)
+        b))))
 
 					;************************************************************
 					;DAY HANDLING
@@ -245,7 +262,7 @@
 
   [db-struct date & body]
   `(when-let [day# (use-day ~db-struct ~date)]
-     (binding [*day* day#]
+         (binding [*day* day#]
        (try
 	 (do ~@body)
 	 (finally
@@ -258,8 +275,11 @@
 	nids (fn [d] @(:name-ids d))]
     (if-let [day-struct (get @(:dayname-days db-struct) day)]
       (nids day-struct)
-      (using-day db-struct day
-		 (nids *day*)))))
+      (if-let [d (use-day db-struct day true)]
+        (try
+          (nids d)
+          (finally (return-day db-struct day)))
+        {}))))
 
 (defn- create-new-data-id
   "Create a new primare id for a name and day"
@@ -277,6 +297,8 @@
 ;May return a btree with another id, if this happens to be occupied by browsers
 (defn for-writing
   ([day-struct name-keys id time-left]
+;     (.lock (:lock day-struct))
+;     (try
   (let [has-reader (fn [id] (some #(= id %) (vals @(:browser-recid day-struct))))
 	write-latch (fn [id] (get @(:writter-recid-latches day-struct) id))]
     (let [status (dosync (let [l (write-latch id)
@@ -307,7 +329,9 @@
 		new-tree)
 	      (if (.await ^CountDownLatch status time-left TimeUnit/MILLISECONDS)
 		(recur day-struct name-keys id (- time-left (- (System/currentTimeMillis) timestamp)))
-		(throw (RuntimeException. "Could not write in time"))))))))))
+		(throw (RuntimeException. "Could not write in time")))))))))
+  ;(finally (.unlock (:lock day-struct)))
+  )
   ([day-struct name-keys id]
      (for-writing day-struct name-keys id 10000)))
       
@@ -329,27 +353,29 @@
        (finally (return-for-writing ~day-struct (.getRecid ^BTree *btree*))))))
 
 
-(defn delete-day [day-struct db-struct]
-  (let [name (:name day-struct)]
+(defn delete-day [db-struct day]
+  (let [name (date-as-day day)]
+    (using-day db-struct name
     (when (dosync
 	   (if (and
 		(= 1 (get @(:day-users db-struct) name)) 
-		(empty? @(:browser-recid day-struct))
-		(empty? @(:writter-recid-latches day-struct))
+		(empty? @(:browser-recid *day*))
+		(empty? @(:writter-recid-latches *day*))
 		(not (contains? @(:being-deleted db-struct) name)))
-	     (do (reset! (:closed day-struct) true)
+	     (do (reset! (:closed *day*) true)
 		 (alter (:being-deleted db-struct) conj name)
 		 (alter (:unused-days-lru db-struct) (fn [u] into [] (filter #(= name %) u)))
 		 (alter (:dayname-days db-struct) dissoc name)
 		 (alter (:day-users db-struct) dissoc name)
 		 true)
 	     false))
+      (.lock (:lock *day*))
       (try
-	((:close day-struct)) ;should be close name on db-struct
+	((:close *day*)) ;should be close name on db-struct
 	(let [files-to-delete (.listFiles (File. (:path db-struct))
 					  (proxy [FilenameFilter] []
 					    (accept [dir file-name]
-						    (.startsWith file-name (Integer/toString name)))))]
+						    (.startsWith ^String file-name (Integer/toString name)))))]
 	  (doseq [file files-to-delete]
 	    (let [rafile (RandomAccessFile. file "rw")
 		  channel (.getChannel rafile)]
@@ -361,7 +387,8 @@
 		(throw (IOException. (.getPath file) "is in use")))
 	      (finally
 	       (.close rafile)))))
-	  (doseq [file files-to-delete]
+          (dosync (alter (:existing-days db-struct) disj name)) 
+	  (doseq [^File file files-to-delete]
 	    (when-not (.delete file)
 	      (throw (IOException. "Could not delete" (.getPath file))))))
 	
@@ -374,7 +401,8 @@
 		(.delete (BTree/load recman id))))
 	    (.delete name-t)
 	    (.delete ids-t))
-	(finally (dosync (alter (:being-deleted db-struct) disj name)))))))
+	(finally (dosync (alter (:being-deleted db-struct) disj name))
+                 (.unlock (:lock *day*))))))))
 
 
 
@@ -387,15 +415,25 @@
   (let [dayname-days (ref {})
 	unused-days-lru (ref [])
 	day-users (ref {})
-	being-deleted (ref #{})]
-  {:path path 
-   :days-to-keep unused-days-to-keep-open 
-   :dayname-days dayname-days ;the open day structures according to day as int 
-   :unused-days-lru unused-days-lru
-   ;number of current users for each day-int
-   :day-users day-users
-   :being-deleted being-deleted
-   :close (fn close-db []
+	being-deleted (ref #{})
+        existing-days (ref (reduce (fn [r e]
+                                     (if-let [m  (re-matches #"^(\d{8})\." (.getName e))]
+                                              (conj r (Integer/valueOf (second m)))
+                                              r)
+                                     ) #{} (.listFiles (File. path) (proxy [FileFilter] []
+                                                                             (accept [^File file]
+                                                                               (not (.isDirectory file)))))))
+                                                                               ]
+    
+    {:path path
+     :existing-days existing-days
+     :days-to-keep unused-days-to-keep-open 
+     :dayname-days dayname-days ;the open day structures according to day as int 
+     :unused-days-lru unused-days-lru
+                                        ;number of current users for each day-int
+     :day-users day-users
+     :being-deleted being-deleted
+     :close (fn close-db []
 	    (let [dn-d (dosync
 			(let [r @dayname-days]
 			  (ref-set dayname-days {})
@@ -415,19 +453,38 @@
        (try (do ~@body)
 	    (finally ((:close db#)))))))
 
-(defn days-with-data [])
+(defn days-with-data
+  ([db-struct]
+     @(:existing-days db-struct))
+  ([]
+     (if-let [env @*db-env*]
+       (days-with-data env))))
+  
 
-(defmacro using-db-env [path & body])
+(defmacro using-db-env [path & body]
+  `(using-db ~path 3
+             (reset! *db-env* *db*)
+             (try
+               (do ~@body)
+               (finally (reset! *db-env* nil)))))
 
-(defn names [db-struct day]
-  (keys (names-and-ids db-struct day)))
+(defn names
+  ([db-struct day]
+     (keys (names-and-ids db-struct day)))
+  ([day]
+     (if-let [env @*db-env*]
+       (names env day))))
 
-(defn add-to-db [db-struct value ^Date time keys]
-  (let [day (date-as-day time)
-	last-id (fn [] (let [current-ids (get @(:name-ids *day*) keys)]
+(defn add-to-db
+  ([db-struct value ^Date time keys]
+     (let [day (date-as-day time)]
+       (using-day db-struct day
+                  	(let [last-id (fn [] (let [current-ids (get @(:name-ids *day*) keys)]
 			  (if (seq current-ids)
 			    (last current-ids))))]
-    (using-day db-struct day
+
+               ;(.lock (:lock *day*))
+               ;(try
 	       (let [id (or (last-id)
 			    (let [l ^ReentrantLock (:lock *day*)] 
 			      (.lock l)
@@ -438,24 +495,49 @@
 		 (writing *day* keys id
 			  (try
 			    (.insert ^BTree *btree* (.getTime time) value true)
+                            (when (< 999 (swap! (:uncommitted-inserts *day*) inc))
+                              (.commit (:recman *day*))
+                              (reset! (:uncommitted-inserts *day*) 0))
 			    (catch IOException e
-			      (println "Couldn't write" time value))))))))
+			      (println "Couldn't write" time value)))))
+               ;(finally (.unlock (:lock *day*)))
+               ))))
+  ([value time keys]
+      (if-let [env @*db-env*]
+       ( add-to-db env value time keys)
+       ( add-to-db *db* value time keys))))
 
-(defn sync-database [db-struct]
-
+(defn sync-database
+  ([db-struct]
   (dorun (for [d-s (vals @(:dayname-days db-struct))]
-    (do ;(println "commit")
-    (.commit (:recman d-s) )))))
+           (do ;(println "commit")
+             ;(.lock (:lock d-s))
+             ;(try
+               (.commit (:recman d-s))
+               (reset! (:uncommitted-inserts d-s) 0)
+             ;  (finally (.unlock (:lock d-s))))
+             ))))
+  ([]
+     (if-let [env @*db-env*]
+       (sync-database env)
+       (sync-database *db*))))
+     
 
-(defn remove-date [db-struct date]
-  (using-day db-struct (date-as-day date)
-	     (delete-day *day* db-struct)))
+(defn remove-date
+  ([db-struct date]
+     (if-let [env @*db-env*]
+       (remove-date env date)
+       (remove-date *db* date))))
 
 (defn compress-data
   ([date termination-fn])
   ([date] (compress-data date (fn [] false))))
 
-(defn get-from-db [fun day keys-and-data])
+(defn get-from-db [fun day keys-and-data]
+  (when-let [db @*db-env*]
+    (with-open [b ^Browser (browser db day keys-and-data)]
+      (doseq [e (seq b)]
+        (fun [e])))))
 
 (defn tree-ids-of [db-struct date keys]
   (get (names-and-ids db-struct date) keys))
@@ -547,7 +629,7 @@
 		 ;(doseq [v (apply browse db *day* (get (names-and-ids db date) name))]
 		  ; (println (Date. (first v)) "==" (second v)))
 		 (println "Using browser")
-		 (with-open [b (browser *day* name)]
+		 (with-open [b (browser db date name)]
 		   (doseq [v b];(apply browser *day* (get (names-and-ids db date) name))]
 					;(println (Date. (first v)) "==" (second v)))
 		     (println (first v) "==" (second v))))
@@ -561,19 +643,19 @@
 		 (is (empty? @(:browser-recid *day*)))
 		 (is (empty? @(:writter-recid-latches *day*)))
 
-		 (with-open [b (browser *day* name)];(apply browser *day* (get (names-and-ids db date) name))]
+		 (with-open [b (browser db date name)];(apply browser *day* (get (names-and-ids db date) name))]
 		   (is (= 1 (count @(:browser-recid *day*))))
 		   (is (= (get @(:browser-recid *day*) b) (first (val (first  @(:name-ids *day*))))))
 		   (.close b)
 		   (is (= 0 (count @(:browser-recid *day*)))))
-		 (with-open [b (browser *day* name)];(apply browser *day* (get (names-and-ids db date) name))
+		 (with-open [b (browser db date name)];(apply browser *day* (get (names-and-ids db date) name))
 		      (let [first-id ( first (val (first  @(:name-ids *day*))))]
 			(add-to-db db 42 (Date. (+ 3000 (.getTime date))) name)
 			(is (= 1 (count @(:browser-recid *day*))))
 			(is (= 2 (count (val (first  @(:name-ids *day*))))))
 			(is (= first-id (first (val (first  @(:name-ids *day*))))))
 			(is (= (map #(second %) b) [32 37]))
-			(is (= (map #(second %) (browser *day* name));(apply browser *day* (get (names-and-ids db date) name))
+			(is (= (map #(second %) (browser db date name));(apply browser *day* (get (names-and-ids db date) name))
 			        [32 37 42])) )
 		      )))))
 
@@ -596,14 +678,14 @@
 		 (.clearCache (:recman *day*))
 		 (println "size:" (files-size *temp-dir*))
 		 (println "Read")
-		 (with-open [b (browser *day* a-name)]
+		 (with-open [b (browser db 20110101 a-name)]
 		   (println (time  (count (seq b)))))
 ;		 (time (doseq [id (get @(:name-ids *day*) a-name)]
 					;			 (.delete (:recman *day*) id)))
 		 
 		 (time (.commit (:recman *day*)))
 		 
-		 (delete-day *day* db)
+		 (delete-day db 20110101)
 		 ;(.delete (:recman *day*) 0)
 	;	 (.commit (:recman *day*))
 	;	 (.defrag (:recman *day*))

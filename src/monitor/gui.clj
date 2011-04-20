@@ -55,7 +55,7 @@
   (defn- poll []
     (if-let [server @current-server]
       (try
-	(get-new-data (fn [] server))
+	(get-new-data (fn [] server) nil)
 	(catch Exception e
 	  (print-cause-trace e) 
 	  (dosync
