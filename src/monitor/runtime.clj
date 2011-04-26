@@ -422,7 +422,12 @@
   (doseq [rt  @runtimes]
     (update-table-and-graphs rt)))
 
-  
+
+(defn- without-old [m limit]
+  (reduce (fn [r e]
+            (assoc r (key e) (apply dissoc (val e) (filter #(neg? (compare % limit)) (keys (val e))))))
+          m m))
+
 (defn get-new-data [server dbdesc]
                                         ;(setXRange)
   (try
@@ -452,8 +457,8 @@
                 (if dbdesc
                   (reduce (fn [r e]
                             #_(println "About to retrieve" e)
-                            (let [ol-data (get-data (Date. (- (System/currentTimeMillis) (* 60 60 1000)))
-                                         (Date. (+ (System/currentTimeMillis) (* 60 60)))
+                            (let [ol-data (get-data (Date. ^Long (- (System/currentTimeMillis) (* 60 60 1000)))
+                                         (Date. ^Long (+ (System/currentTimeMillis) (* 60 60)))
                                          (reduce #(conj %1 (key %2) (val %2)) [] e)
                                          server)]
 ;                              (println "Got" ol-data)
@@ -465,24 +470,21 @@
 
       (doseq [a-data (seq data)]
         (let [data {(key a-data) (val a-data)}]
-;        (println "dut" dut)
-        
-;        (println "data" data)
-	(let [transformed-data (transformations-according-to-specs data non-raw-specs)
-              data (merge data transformed-data)]
-          #_(println (with-out-str
-                     (doseq [e data]
-                     (print (key e))
-                     (print (last (val e))))))
-
+          (let [transformed-data (transformations-according-to-specs data non-raw-specs)
+                data (merge data transformed-data)]
+            #_(println (with-out-str
+                         (doseq [e data]
+                           (print (key e))
+                           (print (last (val e))))))
+            
                                         ;         (println "transformed data" transformed-data)
-          (doseq [d data]
-            (swap! all-runtime-data (fn [rtd]
+            (doseq [d data]
+              (swap! all-runtime-data (fn [rtd]
                                         ; (println "Data is" data)
-                                      (if (contains? rtd (key d))
-                                        (update-in rtd [(key d)] #(merge % (val d)))
-                                        (assoc rtd (key d) (val d)))))))))
-
+                                        (if (contains? rtd (key d))
+                                          (update-in rtd [(key d)] #(merge % (val d)))
+                                          (assoc rtd (key d) (val d)))))))))
+      (swap! all-runtime-data without-old (Date. ^Long (- (System/currentTimeMillis) (* 62 60 1000))))
       (if (SwingUtilities/isEventDispatchThread)
         (update-runtime-data)
         (SwingUtilities/invokeAndWait update-runtime-data)))

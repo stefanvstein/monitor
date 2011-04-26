@@ -108,7 +108,7 @@
   
 
 
-(defn on-add-to-analysis [from to shift name-values all-names func-string
+(defn on-add-to-analysis [from to shift name-values func-string
 			  { time-series-coll :time-series
 			   disable-col :disable-collection
 			   enable-col :enable-collection
@@ -186,7 +186,12 @@
                                       (stop-chart-notify)
                                       (try
                                         ;(doseq [data datas]
-                                        (let [data (last datas)]
+                                        (let [dat (last datas)
+                                              data (reduce (fn [r e]
+                                                            (assoc r (key e) (transform (val e) func-string)))
+                                                          {}
+                                                          dat)]
+
                                         (dorun (map (fn [data]
                                                       (let [data-key (let [dk (assoc (key data) :type func-string)]
 								(if (= 0 shift)
@@ -265,25 +270,31 @@
 				      (.setText status-label "Retrieving...")))
 	(try
 					;	(if (= "Raw" func-string)
-	(let [days (full-days-between from to)
-	      alldata (atom {})]
-	  (swap! num-to-render (fn [d] (+ d (count days))))
+          (let [days (full-days-between from to)
+                alldata (atom {})]
+            (swap! num-to-render (fn [d] (+ d (count days))))
                                         ;          (println "all-names" all-names)
-           (doseq [nv (according-to-specs all-names [(apply hash-map name-values)])]
-             (dorun (map (fn [ e ]
-                           (swap! alldata (fn [a] (reduce (fn [r l]
-                                                            (if-let [current (get r (key l))]
-                                                              (assoc r (key l) (merge current (val l)))
-                                                              (assoc r (key l) (val l))))
-                                                          a
-                                                          (shift-time (get-data (first e)
-                                                                                (second e)
-                                                                                (reduce #(conj %1 (key %2) (val %2)) [] nv)
-                                                                                server))))))
-                                days))
-             (let [res (reduce (fn [r e]
-						 (assoc r (key e) (transform (val e) func-string))) {} @alldata)]
-	    (updatechart res))))
+
+            (doseq [e days]
+              (doseq [nv (according-to-specs (reduce (fn [r e]
+                                                       (reduce (fn [r e]
+                                                                 (conj r e)) r e))
+                                                     #{} (vals (get-names (first e) (second e) server)))
+                                             [(apply hash-map name-values)])]
+                            ;(println "get" nv e)
+                            (swap! alldata (fn [a] (reduce (fn [r l]
+                                                             (if (seq (val l))
+                                                             (if-let [current (get r (key l))]
+                                                               (assoc r (key l) (merge current (val l)))
+                                                               (assoc r (key l) (val l)))
+                                                             r))
+                                                           a
+                                                           (shift-time (get-data (first e)
+                                                                                 (second e)
+                                                                                 (reduce #(conj %1 (key %2) (val %2)) [] nv)
+                                                                                server)))))
+                       
+                            (updatechart @alldata))))
 	(finally
 	(SwingUtilities/invokeLater (fn []
 ;				      (when (= @num-rendered @num-to-render)
@@ -404,8 +415,7 @@
 					    to
 					    shift
 					    name-values
-					    @all-names
-					    fun
+                                            fun
 					    contents
 					    server)
 			))))
@@ -502,10 +512,9 @@
 						   
 						    (swap! all-names (fn [_]
 								       (reduce (fn [r e]
-					;e är lista
-										 (reduce (fn [r e]
-											   (conj r e)) r e)
-										 ) #{} (vals names)) 
+                                                                                 (reduce (fn [r e]
+											   (conj r e)) r e))
+                                                                               #{} (vals names)) 
 								       ))
 						    
 						    (let [panel-and-models (on-update names [add add-new-window])

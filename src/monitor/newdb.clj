@@ -35,7 +35,7 @@
 
 ;For compatibility, this is set when using-db-env
 (def *db-env* (atom nil)) ;I know this does qualify for ear mufs
-
+(def write-lock (Object.))
 (defn- read-name-ids
   "Returns a map of names and seq of ids using a record manager and belonging BTrees primaryid-name and primary-ids"
   [recman ^BTree primary-name-tree ^BTree primary-ids-tree]
@@ -52,9 +52,11 @@
 (defn- new-day
   "Creates a new daystruct out of a path and day, reading meta data from db"
   [path day]
+  (locking write-lock
   ;wait if being deleted
   (let [r  (RecordManagerFactory/createRecordManager
 	    (.getPath (File. path (Integer/toString day))))]
+    (println "Open" day)
 
       (let [primary-name-tree (let [k (.getNamedObject r "keys")]
 				(if (zero? k)
@@ -100,11 +102,15 @@
 		      (println "OK")))
 			  
 		  (try
-		    (.commit r)
+                    (locking write-lock
+                      (.commit r)
+                      
+                    (println "Closing " day)
 		    (.close ^RecordManager r)
+                    )
 		    (catch IOException e
 		      (println "Could not close" day " " (.getMessage e))))
-		  (finally (.unlock lock))))})))
+		  (finally (.unlock lock))))}))))
 
 
 (def get-day-lock (Object.))
@@ -118,6 +124,7 @@
 	  (let [a-new-day (try
 			    (let [r (new-day (:path db-struct) day)]
                               (dosync (alter (:existing-days db-struct) conj day))
+                              ;(println "creating day" day "->" @(:existing-days db-struct))
                               r)
 			    (catch IOException e e))]
 	    (if (instance? Exception a-new-day)
@@ -145,6 +152,7 @@
      (alter unused-days-lru (fn [unused] (into [] (filter #(not= day %) unused))))) 
     day-struct))
   ([db-struct date dont-create]
+     ;(println "use-day" (date-as-day date) "->" @(:existing-days db-struct))
      (if (and dont-create (not (contains? @(:existing-days db-struct) (date-as-day date))))
        nil
        (use-day db-struct date))))
@@ -284,6 +292,7 @@
 (defn- create-new-data-id
   "Create a new primare id for a name and day"
   [db-struct day tname] ;This may overwrite any existing recid for this name!!!!
+  (locking write-lock
   (using-day db-struct day
 	     (let [btree (BTree/createInstance (:recman *day*))
 		   recid (.getRecid btree)
@@ -292,7 +301,7 @@
 	       (.insert ^BTree primary-name recid tname false)
 	       (dosync
 		(alter name-ids assoc tname [recid]))
-	       recid)))
+	       recid))))
 
 ;May return a btree with another id, if this happens to be occupied by browsers
 (defn for-writing
@@ -325,7 +334,8 @@
 				  (alter (:writter-recid-latches day-struct) assoc recid (CountDownLatch. 1))
 				  (alter (:name-ids day-struct) (fn [name-ids] (assoc name-ids name-keys new-id-strip)))
 				  new-id-strip))]
-		  (.insert ^BTree (:primary-ids-tree day-struct) (first id-strip) (next id-strip) true))
+                  (locking write-lock
+		  (.insert ^BTree (:primary-ids-tree day-struct) (first id-strip) (next id-strip) true)))
 		new-tree)
 	      (if (.await ^CountDownLatch status time-left TimeUnit/MILLISECONDS)
 		(recur day-struct name-keys id (- time-left (- (System/currentTimeMillis) timestamp)))
@@ -354,6 +364,7 @@
 
 
 (defn delete-day [db-struct day]
+  (locking write-lock
   (let [name (date-as-day day)]
     (using-day db-struct name
     (when (dosync
@@ -387,7 +398,8 @@
 		(throw (IOException. (.getPath file) "is in use")))
 	      (finally
 	       (.close rafile)))))
-          (dosync (alter (:existing-days db-struct) disj name)) 
+          (dosync (alter (:existing-days db-struct) disj name))
+          ;(println "Deleteing day" name "->" @(:existing-days db-struct))
 	  (doseq [^File file files-to-delete]
 	    (when-not (.delete file)
 	      (throw (IOException. "Could not delete" (.getPath file))))))
@@ -402,7 +414,7 @@
 	    (.delete name-t)
 	    (.delete ids-t))
 	(finally (dosync (alter (:being-deleted db-struct) disj name))
-                 (.unlock (:lock *day*))))))))
+                 (.unlock (:lock *day*)))))))))
 
 
 
@@ -417,13 +429,15 @@
 	day-users (ref {})
 	being-deleted (ref #{})
         existing-days (ref (reduce (fn [r e]
-                                     (if-let [m  (re-matches #"^(\d{8})\." (.getName e))]
+                                     (if-let [m  (re-matches #"^(\d{8})\..*" (.getName e))]
                                               (conj r (Integer/valueOf (second m)))
                                               r)
                                      ) #{} (.listFiles (File. path) (proxy [FileFilter] []
                                                                              (accept [^File file]
                                                                                (not (.isDirectory file)))))))
-                                                                               ]
+        ]
+
+;    (println "Creating db ->" @existing-days)
     
     {:path path
      :existing-days existing-days
@@ -477,6 +491,7 @@
 
 (defn add-to-db
   ([db-struct value ^Date time keys]
+     (locking write-lock
      (let [day (date-as-day time)]
        (using-day db-struct day
                   	(let [last-id (fn [] (let [current-ids (get @(:name-ids *day*) keys)]
@@ -501,7 +516,7 @@
 			    (catch IOException e
 			      (println "Couldn't write" time value)))))
                ;(finally (.unlock (:lock *day*)))
-               ))))
+               )))))
   ([value time keys]
       (if-let [env @*db-env*]
        ( add-to-db env value time keys)
@@ -509,6 +524,7 @@
 
 (defn sync-database
   ([db-struct]
+     (locking write-lock
   (dorun (for [d-s (vals @(:dayname-days db-struct))]
            (do ;(println "commit")
              ;(.lock (:lock d-s))
@@ -516,7 +532,7 @@
                (.commit (:recman d-s))
                (reset! (:uncommitted-inserts d-s) 0)
              ;  (finally (.unlock (:lock d-s))))
-             ))))
+             )))))
   ([]
      (if-let [env @*db-env*]
        (sync-database env)
