@@ -1,5 +1,5 @@
 (ns monitor.database
-  (:use [monitor newdb mem tools])
+  (:use [monitor newdb2 mem tools])
   (:use clojure.test)
   (:use clojure.contrib.logging)
 ;  (:use cupboard.utils)

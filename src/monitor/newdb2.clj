@@ -12,7 +12,7 @@
   (:use [clojure.pprint :only [pprint]])
   (:use monitor.tools)
   (:use (clojure.contrib profile)))
-
+(def *db-env* (atom nil)) ;This should be obsolete, moved to the client side
 
 (defn- tuple-browser-seq
   "Returns a Lazy seq of browsing using a tuple browser"
@@ -52,6 +52,7 @@
                          (let [min-and-max (min-and-max-of-day (.parse (SimpleDateFormat. "yyyyMMdd") (str day)))
                                min-millis (.getTime (first min-and-max))
                                max-millis (.getTime (second min-and-max))
+                               write-count (atom 0)
                                r  (RecordManagerFactory/createRecordManager
                                    (.getPath (File. path (Integer/toString day))))
                                id-name-tree  (let [k (.getNamedObject r "keys")]
@@ -72,11 +73,11 @@
                                                                                                  (when (.getNext browser t)
                                                                                                    [(.getKey t) (.getValue t)]))))))))
                                name-id (ref (read-name-id))
-                               lock (Object.)
+;                               lock (Object.)
                                
                                
                                close (fn close []
-                                       (locking lock
+                                       (locking db-lock
                                          (reset! closed true)
                                          (.commit r)
                                          (.close r)
@@ -89,7 +90,7 @@
                                          #_(throw (IllegalStateException. (str "Day " day " is closed")))
                                          [])
                                        (when-let [id (get @name-id name)]
-                                         (locking lock
+                                         (locking db-lock
                                            (let [result-seq (if-let [bt (try (BTree/load r id)
                                                                             (catch IOException e
                                                                               (throw (IOException. (with-out-str (println "Could not open BTree for" name "at" day)) e))))]
@@ -116,26 +117,30 @@
                                            (throw (IllegalArgumentException. (str date " is not " day))))
                                         (when @closed
                                                 (throw (IllegalStateException. (str "Day " day " is closed"))))
-                                        (locking lock
+                                        (locking db-lock
                                           
                                          (let [id (or (get @name-id name)
                                                       (create-new-id name))
                                                btree (BTree/load r id)]
-                                           (.insert btree (int (- time-in-millis min-millis)) value true) 
+                                           (.insert btree (int (- time-in-millis min-millis)) value true)
+                                           (when (> 1000 @write-count)
+                                             (.commit r)
+                                             (reset! write-count 0))
                                         ;Make extra commit
                                            ))))
                                        
                                sync (fn sync []
                                       (when @closed
                                          (throw (IllegalStateException. (str "Day " day " is closed"))))
-                                      (locking lock
+                                      (locking db-lock
                                         (when-not @closed
-                                          (.commit r))))
+                                          (.commit r)
+                                          (reset! write-count 0))))
                                
                                delete-name (fn delete-name []
                                              (when @closed
                                                (throw (IllegalStateException. (str "Day " day " is closed"))))
-                                             (locking lock))]
+                                             (locking db-lock))]
                            (dosync (alter existing conj day))
                               
                            {:names names
@@ -280,58 +285,58 @@
             )))))
                     
   
-(def *db-env* (atom nil)) ;This should be obsolete, moved to the client side
-(defmacro using-db-env [path & body]
-  `(using-db ~path
-             (reset! *db-env* *db*)
-             (try
-               (do ~@body)
-               (finally (reset! *db-env* nil)))))
 
 
 (defn day-reuse [db-struct to-keep]
  
  
-               (let [lock (Object.)
+               (let [lock (:lock db-struct)
                      day-users (ref {})
                      day-fifo (ref [])
+                     old-ones (fn [] (filter #(not (contains? @day-users %)) (drop-last to-keep @day-fifo)))
+                     close-and-remove (fn [to-close] (doseq [d to-close]
+                                                 ((:close ((:day db-struct) d false))))
+                                  (dosync (alter day-fifo (fn [day-fifo]
+                                                            (into [] (filter #(not (some (set to-close) [%])) day-fifo))))))
+                     closed? (fn [date]
+                               (let [day (date-as-day date)]
+                                 (locking lock
+                                   (if-not (contains? @day-users day)
+                                     (do
+                                       (when (some (set @day-fifo) [day])
+                                         (close-and-remove [day]))
+                                       true)
+                                     false))))
+                                     
+                                       
                      acquire-day (fn acquire-day [date create?]
                                    (locking lock
-                                     (println "Acquire **********************")
                                      (let [day (date-as-day date)]
                                        (when-let [d ((:day db-struct) date create?)] 
-                                         (let [to-close (dosync (alter day-fifo (fn [day-fifo]
+                                         (close-and-remove (dosync (alter day-fifo (fn [day-fifo]
                                                                                   (conj (into [] 
                                                                                               (filter #(not (= day %)) day-fifo))
                                                                                         day)))
                                                                 (alter day-users update-in [day] #(if % (inc %) 1))
-                                                                (filter #(not (contains? @day-users %)) (drop-last to-keep @day-fifo)))]
-                                           (println "to-close " to-close)
-                                           (doseq [d to-close]
-                                             ((:close ((:day db-struct) d false))))
-                                           (dosync (alter day-fifo (fn [day-fifo]
-                                                                     (into [] (filter #(not (some (set to-close) [%])) day-fifo))))))))))
+                                                                (old-ones)))
+                                         d))))
                      release-day (fn release-day [date]
                                    (let [day (date-as-day date)]
                                      (locking lock
-                                       (let [to-close (dosync (alter day-users (fn [day-users]
+                                       (close-and-remove (dosync (alter day-users (fn [day-users]
                                                                                  (if-let [v (get day-users day)]
                                                                                    (if (= 1 v)
                                                                                      (dissoc day-users day)
                                                                                      (assoc day-users day (dec v)))
                                                                                    day-users)))
-                                                              (filter #(not (contains? @day-users %)) (drop-last to-keep @day-fifo)))]
-                                         (doseq [d to-close]
-                                           ((:close ((:day db-struct) d false))))
-                                         (dosync (alter day-fifo (fn [day-fifo]
-                                                                   (into [] (filter #(not (some (set to-close) [%])) day-fifo)))))))))]
-                     
+                                                              (old-ones))))))]
                  
-                 {:acquire acquire-day
+                 {:closed? closed?
+                  :acquire acquire-day
                   :release release-day
                   :users (fn [] @day-users)
                   :fifo (fn [] @day-fifo)
-                  :db @*db-env*}))
+                  :db db-struct}))
                  
 (deftest test-reuse
   
@@ -382,4 +387,87 @@
       (is (= {20070104 1 20070107 1 20070108 1} ((:users reuse))))
       (is (= [20070104 20070107 20070108]  ((:fifo reuse))))
 
-)))  
+      )))
+
+(def *day* nil)
+(defmacro acquire-and-release [reuse date create? & form]
+  `(do
+     (binding [*day* ((:acquire ~reuse) ~date ~create?)]
+       (try
+         (do ~@form)
+         (finally ((:release ~reuse) ~date))))))
+
+                                        ; USwer interface
+
+(defmacro using-db-env [path & body]
+  `(using-db ~path
+             (reset! *db-env* (day-reuse *db* 10))
+             (try
+               (do ~@body)
+               (finally (reset! *db-env* nil)))))
+
+
+
+(defn days-with-data []
+     (when-let [db (:db *db-env*)]
+       @(:existing db)))
+
+
+(defn names
+  [day]
+     (when-let [env @*db-env*]
+       (acquire-and-release env day false
+                            (if *day*
+                              ((:names *day*))
+                              ))))
+
+(defn add-to-db
+  [value time keys]
+  (when-let [env @*db-env*]
+    (acquire-and-release env time true
+                         ((:write *day*) keys time value))))
+
+(defn sync-database
+  []
+  (when-let [env @*db-env*]
+    (doseq [day ((:fifo env))]
+      (acquire-and-release env day false
+                           ((:sync *day*))))))
+
+(defn remove-date
+  [date]
+  (when-let [env @*db-env*]
+    (when ((:closed? env) date)
+      ((:delete (:db env)) date))))
+
+
+(defn get-from-db
+  [fun day keys]
+  (when-let [env @*db-env*]
+    (acquire-and-release env day false
+                         (when *day*
+                           (let [r ((:read *day*) keys)]
+                             (doseq [e (seq r)]
+                               (fun [e])))))))
+
+
+(defn compress-data
+  ([date termination-fn])
+  ([date] (compress-data date (fn [] false))))
+     
+
+
+(deftest by-interface
+   (with-temp-dir
+     (let [da (fn [s] (.parse (SimpleDateFormat. "yyyyMMdd HHmmss") s))]
+       (using-db-env (.getPath *temp-dir*)
+                     (remove-date (da "20010202 000000"))
+                     (println (names (da "20010202 000000")))
+                     (add-to-db 32 (da "20010202 000001") {:arne "Weise"})
+                     (add-to-db 37 (da "20010202 000002") {:arne "Weise"})
+                     (add-to-db 38 (da "20010202 000003") {:arne "Weise"})
+                     (add-to-db 48 (da "20010201 000003") {:arne "Bodil"})
+                     (get-from-db (fn [p] (println p)) (da "20010202 000003") {:arne "Weise"})
+                     (println "names" (names (da "20010202 000002")))
+                     (sync-database)
+       ))))
