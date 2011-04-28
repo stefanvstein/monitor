@@ -14,6 +14,25 @@
   (:use (clojure.contrib profile)))
 (def *db-env* (atom nil)) ;This should be obsolete, moved to the client side
 
+#_(defprotocol DayProtocol
+  (names-of-day [this])
+  (read-data [this name])
+  (close-day [this])
+  (closed? [this])
+  (write-data [this name date value])
+  (sync-db [this])
+  (delete-name [this name]))
+
+#_(deftype DayType [name-fn read-fn close-fn closed-fn write-fn sync-fn delete-fn]
+  DayProtocol
+  (names-of-day [this] (name-fn))
+  (read-data [this name] (read-fn name))
+  (close-day [this] (close-fn))
+  (closed? [this] (closed-fn))
+  (write-data [this name date value] (write-fn name date value))
+  (sync-db [this] (sync-fn))
+  (delete-name [this name] (delete-fn name)))
+
 (defn- tuple-browser-seq
   "Returns a Lazy seq of browsing using a tuple browser"
   [^TupleBrowser tuple-browser]
@@ -43,15 +62,16 @@
                (.set Calendar/MILLISECOND (.getActualMaximum c Calendar/MILLISECOND)))
             [min (.getTime c)])))
   
-(defn- day-struct [date create? db-lock db-closed path name-day existing]
+(defn- day-struct [date create? db-lock db-closed ^String path name-day existing]
   (when @db-closed
     (throw (IllegalStateException. "DB is closed")))
-  (let [day (date-as-day date)]
+  (let [day (date-as-day date)
+        clear-cache-counter (atom 0)]
     (locking db-lock
       (let [create-day (fn create-day []
                          (let [min-and-max (min-and-max-of-day (.parse (SimpleDateFormat. "yyyyMMdd") (str day)))
-                               min-millis (.getTime (first min-and-max))
-                               max-millis (.getTime (second min-and-max))
+                               min-millis (.getTime ^Date (first min-and-max))
+                               max-millis (.getTime ^Date (second min-and-max))
                                write-count (atom 0)
                                r  (RecordManagerFactory/createRecordManager
                                    (.getPath (File. path (Integer/toString day))))
@@ -94,10 +114,10 @@
                                            (let [result-seq (if-let [bt (try (BTree/load r id)
                                                                             (catch IOException e
                                                                               (throw (IOException. (with-out-str (println "Could not open BTree for" name "at" day)) e))))]
-                                                              (tuple-browser-seq (.browse bt))
+                                                              (tuple-browser-seq (.browse ^BTree bt))
                                                              [])]
                                             (reduce (fn [r e]
-                                                      (conj r [(Date. (+ min-millis (first e)))
+                                                      (conj r [(Date. (+ min-millis (long (first e))))
                                                                (second e)]))
                                                       []
                                                       result-seq)))))
@@ -110,10 +130,10 @@
                                                  (dosync (alter name-id assoc name recid))
                                                  recid))
                                                
-                               write (fn write [name date value]
+                               write (fn write [name ^Date date value]
                                        (let [time-in-millis (.getTime date)]
-                                         (when (or (>= min-millis time-in-millis)
-                                                   (<= max-millis time-in-millis))
+                                         (when (or (> min-millis time-in-millis)
+                                                   (< max-millis time-in-millis))
                                            (throw (IllegalArgumentException. (str date " is not " day))))
                                         (when @closed
                                                 (throw (IllegalStateException. (str "Day " day " is closed"))))
@@ -123,18 +143,29 @@
                                                       (create-new-id name))
                                                btree (BTree/load r id)]
                                            (.insert btree (int (- time-in-millis min-millis)) value true)
-                                           (when (> 1000 @write-count)
+                                           (swap! write-count inc)
+                                           (when (< 10000 @write-count)
                                              (.commit r)
                                              (reset! write-count 0))
                                         ;Make extra commit
                                            ))))
-                                       
+                            ;   clear-cache-counter (atom 10)
                                sync (fn sync []
                                       (when @closed
                                          (throw (IllegalStateException. (str "Day " day " is closed"))))
                                       (locking db-lock
                                         (when-not @closed
+                                          
                                           (.commit r)
+                                          (when (= 10 (swap! clear-cache-counter (fn [c]
+                                                                                   (if (> 0 c)
+                                                                                     10
+                                                                                     (dec c)))))
+                                            (.clearCache r)
+
+                                            )
+                                          
+                                          
                                           (reset! write-count 0))))
                                
                                delete-name (fn delete-name []
@@ -163,9 +194,9 @@
 (defn db-struct [^String path]
   (let [lock (Object.)
         name-day (ref {})
-        existing (ref (reduce (fn [r e]
+        existing (ref (reduce (fn [r ^File e]
                                 (if-let [m  (re-matches #"^(\d{8})\..*" (.getName e))]
-                                  (conj r (Integer/valueOf (second m)))
+                                  (conj r (Integer/valueOf ^String (second m)))
                                   r))
                               #{}
                               (.listFiles (File. path) (proxy [FileFilter] []
@@ -195,7 +226,7 @@
                                                        (proxy [FilenameFilter] []
                                                          (accept [dir file-name]
                                                            (.startsWith ^String file-name (Integer/toString day)))))]
-                       (doseq [file files-to-delete]
+                       (doseq [^File file files-to-delete]
                          (let [rafile (RandomAccessFile. file "rw")
                                channel (.getChannel rafile)]
                            (try
@@ -207,7 +238,7 @@
                              (finally
                               (.close rafile)))))
                        (dosync (alter existing disj day)) 
-                       (doseq [file files-to-delete]
+                       (doseq [^File file files-to-delete]
                          (when-not (.delete file)
                            (throw (IOException. "Could not delete" (.getPath file))))))
                      (dosync (alter being-deleted disj day)))))
@@ -409,8 +440,11 @@
 
 
 (defn days-with-data []
-     (when-let [db (:db *db-env*)]
-       @(:existing db)))
+;  (println "days-with-data")
+     (when-let [db (:db @*db-env*)]
+       (let [r @(:existing db)]
+ ;        (println "Existing days " r)
+         r)))
 
 
 (defn names
@@ -469,5 +503,7 @@
                      (add-to-db 48 (da "20010201 000003") {:arne "Bodil"})
                      (get-from-db (fn [p] (println p)) (da "20010202 000003") {:arne "Weise"})
                      (println "names" (names (da "20010202 000002")))
-                     (sync-database)
+                      (sync-database)
+                     (println (days-with-data)) 
+                    
        ))))

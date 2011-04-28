@@ -94,9 +94,11 @@
 		      (alter tasks-to-start conj
 			     (fn history-cleaner []
 			       (while (not (terminating?))
-				 (try (term-sleep (* 60 60 3 ))
+                                 (try (term-sleep (* 60 60 3 ))
+                                        ;(try (term-sleep (* 60 1 ))
 				      (catch InterruptedException _))
 				 (when-not (terminating?)
+                                   (println "About to clean")
 				   (clean-stored-data-older-than 
 				    (java.util.Date. (- (System/currentTimeMillis) 
 							(* history-days 24 1000 60 60))))

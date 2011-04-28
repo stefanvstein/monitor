@@ -60,7 +60,7 @@
 			    {} names)]
     (when (seq keyed-names)
       (doseq [d data]
-	(add-data keyed-names (key d) (val d))))))
+	(add-data keyed-names (key d) (val d) true false)))))
   
 
 (defn raw-live-names []

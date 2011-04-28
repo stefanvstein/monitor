@@ -430,7 +430,7 @@
 
 (defn get-new-data [server dbdesc]
                                         ;(setXRange)
-  (try
+
     (let [raw-type (first types)
 	  transformations-according-to-specs (fn [data specs]
 					      (into {}
@@ -487,6 +487,5 @@
       (swap! all-runtime-data without-old (Date. ^Long (- (System/currentTimeMillis) (* 62 60 1000))))
       (if (SwingUtilities/isEventDispatchThread)
         (update-runtime-data)
-        (SwingUtilities/invokeAndWait update-runtime-data)))
-  (catch Exception e
-    (.printStackTrace e))))
+        (SwingUtilities/invokeAndWait update-runtime-data))))
+  
