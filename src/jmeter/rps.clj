@@ -211,7 +211,7 @@
 (defn test-all-departures [days]
   (let [train-and-from (fn [e] [(get e "train") (get e "from")])
         tra (trains train-and-from identity)]
-    (dorun (departures "litmsj610.sj.se" 34000 (take 1 (map first tra)) days (take 1 (map second tra))))))
+    (dorun (departures "litmsj623.sj.se" 34000 (take 1 (map first tra)) days (take 1 (map second tra))))))
 
 (defn test-all-rotations [days]
   (let [pools (vehicles pool fordon?)]
@@ -244,15 +244,19 @@
           tra (trains train-and-to identity)]
       (with-open [fw (FileWriter. "arrivals.csv")]
         (binding [*out* fw]
-          (dorun (arrivals host 34000 (map first tra) days (map second tra)))))))
+          (dorun (arrivals host port (map first tra) days (map second tra)))))))
   
 (future
     (let [pools (vehicles pool fordon?)
           stations (trains from identity)]
       (with-open [fw (FileWriter. "turnarounds.csv")]
         (binding [*out* fw]
-          (dorun (turnarounds "litmsj610.sj.se" 34000 pools days stations))))))
+          (dorun (turnarounds host port pools days stations))))))
 
-    
+    (future
+    (let [depots ["HGL" "G"]]
+      (with-open [fw (FileWriter. "depottrains.csv")]
+        (binding [*out* fw]
+          (dorun (depot-trains host port depots days days))))))
         
 )
