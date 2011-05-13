@@ -6,7 +6,11 @@
 		 [jfree/jfreechart "1.0.13"]
 		 [jfree/jcommon "1.0.16"]
 		 [my/jchart2d "3.1.0"]
-		 [clojure-csv "1.2.4"]]
+		 [clojure-csv "1.2.4"]
+                                      ;  [clj-http "0.1.3"]]
+                 [org.apache.httpcomponents/httpclient "4.0.3"]
+     [commons-codec "1.4"]
+     [commons-io "1.4"]]
   :min-lein-version "1.4.1" 
   :dev-dependencies [[swank-clojure "1.2.1"]]
   :javac-options {:debug "true"}
