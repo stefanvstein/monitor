@@ -108,6 +108,118 @@
   
 
 
+(defn on-add-to-analysis-new [from to shift name-values func-string
+			  { time-series-coll :time-series
+			   disable-col :disable-collection
+			   enable-col :enable-collection
+			   colors :colors
+			   ^JFreeChart chart  :chart
+			   add-to-table :add-to-table
+			   add-column :add-column
+			   status-label :status-label
+			   data-queue :transfer-queue
+			   num-to-render :num-to-render
+			   num-rendered :num-rendered
+			   name-as-comparable :name-as-comparable}
+			  server]
+  (let [date-pairs-for-names (fn date-pairs-for-names [from to spec]
+                               (let [get-names-according-to-spec-for (fn [from to]
+                                                                       (according-to-specs (get-names from to server) [(apply hash-map spec)]))
+                                     
+                                     all-names-per-dates (reduce (fn [r date-pair]
+                                                                   (assoc r date-pair (get-names-according-to-spec-for (first date-pair) (second date-pair))))
+                                                                 {}
+                                                                 (full-days-between from to))
+                                     
+                                     all-names-found (reduce #(if (seq %2)
+                                                                (apply conj %1 %2)
+                                                                %1)
+                                                             #{}
+                                                             (vals all-names-per-dates))]
+                                 (reduce (fn [r name]
+                                           (assoc r name (filter identity
+                                                                 (map (fn [i]
+                                                                        (when (contains? (val i) name)
+                                                                          (key i)))
+                                                                      all-names-per-dates))))
+                                         {}
+                                         all-names-found)))
+        stop-chart-notify (fn stop-chart-notify []
+                            (.setNotify chart false)
+                            (disable-col))
+	start-chart-notify (fn start-chart-notify []
+                             (.setNotify chart true)
+			     (enable-col))
+
+        
+                         
+	shift-time (if (= 0 shift)
+		     identity
+                     (let [shifted-string (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
+                         (str (.format df from)
+                              " to "
+                              (.format df (Date. (long (+ (.getTime ^Date from) shift))))))]
+                       (fn [a] (let [add-shifted-key (fn [a] (reduce (fn [r a-data]
+                                                                       (assoc r (assoc (key a-data)
+                                                                                  :shifted
+                                                                                  shifted-string)
+                                                                            (val a-data)))
+                                                                   {} a))
+                                   
+                                   data-shifted (with-keys-shifted a identity (fn [#^Date d] (Date. (long (+ (.getTime d) shift)))))]
+                               
+                               (add-shifted-key data-shifted)))))
+
+	transform-all (fn [data func]
+                        (reduce (fn [r e]
+                                  (assoc r (key e) (transform (val e) func)))
+                                {}
+                                data))
+        get-data-for (fn get-data-for [name date-pairs]
+                       (let [update (fn [result data]
+                                                (if (seq (val data))
+                                                  (update-in result [(key data)] merge (val data))
+                                                  result))]
+                         (reduce (fn [r date-pair]
+                                   (reduce update r (shift-time (get-data (first date-pair)
+                                                                          (second date-pair)
+                                                                          (reduce #(conj %1 (key %2) (val %2)) [] name)
+                                                                          server))))
+                                 {}
+                                 date-pairs)))
+        
+
+        update-method (fn update-method [to-update data]
+                        (let [update (fn []
+                                        ; Få skift time att lägga till shift nyckel också, ok
+                                        ;for each data
+                                        ; hämta eller skapa timeserie, behövs inte
+                                        ; merge innehåll med  motsvarande temp från disk
+                                        ;skriv nya temp, i bakgrunden
+                                        ;transform
+                                        ;skapa nans
+                                        ;reducera samples
+                                       ; skapa och stoppa in ny serie
+                                         (when data
+                                           (pprint data)
+                                           (flush)))]
+                            (if-let [d (first to-update)]
+                              (do (future
+                                    (let [data (get-data-for (key d) (val d))]
+                                      (SwingUtilities/invokeLater (fn [] (update-method (next to-update) data)))))
+                                  (update))
+                              (do (update)
+                                  (println "Done")))))]
+
+          (println "Getting names")
+          (future
+            (let [to-update (date-pairs-for-names from to name-values)]
+              (when (seq to-update)
+                (SwingUtilities/invokeLater (fn [] (println "Getting first data")))
+                (let [data (get-data-for (key (first to-update)) (val (first to-update)))]
+                  (SwingUtilities/invokeLater (fn []
+                                                (update-method (next to-update) data)))))))))
+
 (defn on-add-to-analysis [from to shift name-values func-string
 			  { time-series-coll :time-series
 			   disable-col :disable-collection
@@ -124,17 +236,15 @@
 			  server]
 
   (let [collection-subscribers (atom [])
-	stop-chart-notify (fn stop-chart-notify []  (.setNotify chart false)
-					;(dorun (map (fn [timeseries] (.setNotify timeseries false)) (. time-series-coll getSeries)))
-			    (disable-col)
-			    )
+	stop-chart-notify (fn stop-chart-notify []
+                            (.setNotify chart false)
+                            (disable-col))
 	start-chart-notify (fn start-chart-notify []
-			     ;(dorun (map (fn [timeseries] (.setNotify timeseries true)) (. time-series-coll getSeries)))
-			     (.setNotify chart true)
+                             (.setNotify chart true)
 			     (enable-col))
 
 	shift-time (if (= 0 shift)
-		     (fn [a] a)
+		     identity
 		     (fn [a] (with-keys-shifted a (fn [d] d) (fn [#^Date d] (Date. (long (+ (.getTime d) shift)))))))
 		     
 	create-new-time-serie (fn [data-key]
@@ -273,21 +383,21 @@
           (let [days (full-days-between from to)
                 alldata (atom {})]
             (swap! num-to-render (fn [d] (+ d (count days))))
-                                        ;          (println "all-names" all-names)
+
 
             (doseq [e days]
               (doseq [nv (according-to-specs (reduce (fn [r e]
                                                        (reduce (fn [r e]
                                                                  (conj r e)) r e))
-                                                     #{} (vals (get-names (first e) (second e) server)))
+                                                     #{} (vals (grouped-maps (get-names (first e) (second e) server))))
                                              [(apply hash-map name-values)])]
-                            ;(println "get" nv e)
+                            (println "get" nv e)
                             (swap! alldata (fn [a] (reduce (fn [r l]
                                                              (if (seq (val l))
-                                                             (if-let [current (get r (key l))]
-                                                               (assoc r (key l) (merge current (val l)))
-                                                               (assoc r (key l) (val l)))
-                                                             r))
+                                                               (if-let [current (get r (key l))]
+                                                                 (assoc r (key l) (merge current (val l)))
+                                                                 (assoc r (key l) (val l)))
+                                                               r))
                                                            a
                                                            (shift-time (get-data (first e)
                                                                                  (second e)
@@ -508,7 +618,7 @@
 						(let [dates-in-order (date-order (.getDate from-model) (.getDate to-model))
 						      from (first dates-in-order)
 						      to (second dates-in-order)]
-						  (let [names (get-names from to server)]
+						  (let [names (grouped-maps (get-names from to server))]
 						   
 						    (swap! all-names (fn [_]
 								       (reduce (fn [r e]

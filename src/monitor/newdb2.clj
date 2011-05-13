@@ -11,7 +11,9 @@
   (:use clojure.test)
   (:use [clojure.pprint :only [pprint]])
   (:use monitor.tools)
-  (:use (clojure.contrib profile)))
+  (:use (clojure.contrib profile))
+  (:use [clojure.contrib.logging :only [info error]]))
+  
 (def *db-env* (atom nil)) ;This should be obsolete, moved to the client side
 
 #_(defprotocol DayProtocol
@@ -69,18 +71,23 @@
         clear-cache-counter (atom 0)]
     (locking db-lock
       (let [create-day (fn create-day []
+                         ;(println "create-day " day)
                          (let [min-and-max (min-and-max-of-day (.parse (SimpleDateFormat. "yyyyMMdd") (str day)))
                                min-millis (.getTime ^Date (first min-and-max))
                                max-millis (.getTime ^Date (second min-and-max))
                                write-count (atom 0)
-                               r  (RecordManagerFactory/createRecordManager
-                                   (.getPath (File. path (Integer/toString day))))
-                               id-name-tree  (let [k (.getNamedObject r "keys")]
+                               r  (try (RecordManagerFactory/createRecordManager
+                                        (.getPath (File. path (Integer/toString day))))
+                                       (catch IOException e
+                                         (throw (IOException. (str "Could not create day " day) e))))
+                               id-name-tree  (try (let [k (.getNamedObject r "keys")]
                                                (if (zero? k)
                                                  (let [bt (BTree/createInstance r)]
                                                    (.setNamedObject r "keys" (.getRecid bt))
                                                    bt)
                                                  (BTree/load r k)))
+                                                  (catch IOException e
+                                                    (throw (IOException. (str "Could not load id-name BTree for " day) e)))) 
                                closed (atom false)
                                read-name-id (fn read-name-id []
                                               (when @closed
@@ -100,10 +107,14 @@
                                        (locking db-lock
                                          (reset! closed true)
                                          (.commit r)
-                                         (.close r)
-                                         (dosync (ref-set name-id {})
-                                                 (alter name-day dissoc day)
-                                                 (reset! closed true))))
+                                         (try
+                                           (.close r)
+                                           (catch IOException e
+                                             (throw (IOException. (str "Could not close " day ". " (.getMessage e)) e)))
+                                           (finally
+                                            (dosync (ref-set name-id {})
+                                                    (alter name-day dissoc day)
+                                                    (reset! closed true))))))
 
                                read (fn read [name]
                                        (when @closed
@@ -111,62 +122,78 @@
                                          [])
                                        (when-let [id (get @name-id name)]
                                          (locking db-lock
-                                           (let [result-seq (if-let [bt (try (BTree/load r id)
-                                                                            (catch IOException e
-                                                                              (throw (IOException. (with-out-str (println "Could not open BTree for" name "at" day)) e))))]
-                                                              (tuple-browser-seq (.browse ^BTree bt))
-                                                             [])]
-                                            (reduce (fn [r e]
-                                                      (conj r [(Date. (+ min-millis (long (first e))))
-                                                               (second e)]))
-                                                      []
-                                                      result-seq)))))
+                                           (try
+                                             (let [result-seq (if-let [bt (try (BTree/load r id)
+                                                                               (catch IOException e
+                                                                                 (throw (IOException. (with-out-str (println "Could not open BTree for" name "at" day)) e))))]
+                                                                (tuple-browser-seq (.browse ^BTree bt))
+                                                                [])]
+                                               (reduce (fn [r e]
+                                                         (conj r [(Date. (+ min-millis (long (first e))))
+                                                                  (second e)]))
+                                                       []
+                                                       result-seq))
+                                             (catch IOException e
+                                               (error (str "Could not read " name " from " day "." (.getMessage e)))
+                                               [])))))
                                names (fn []
                                        (keys @name-id))
                                create-new-id (fn create-new-id [name]
-                                               (let [btree (BTree/createInstance r)
+                                               (let [btree (try (BTree/createInstance r)
+                                                                (catch IOException e
+                                                                  (throw (IOException. (str "Could not create BTree for " name) e))))
                                                      recid (.getRecid btree)]
-                                                 (.insert id-name-tree recid name true)
+                                                 (try
+                                                   (.insert id-name-tree recid name true)
+                                                   (catch IOException e
+                                                     (throw (IOException. (str "Could not save reference to " name " in id-name-tree") e))))
                                                  (dosync (alter name-id assoc name recid))
                                                  recid))
                                                
                                write (fn write [name ^Date date value]
+                                       (try
                                        (let [time-in-millis (.getTime date)]
                                          (when (or (> min-millis time-in-millis)
                                                    (< max-millis time-in-millis))
                                            (throw (IllegalArgumentException. (str date " is not " day))))
-                                        (when @closed
-                                                (throw (IllegalStateException. (str "Day " day " is closed"))))
-                                        (locking db-lock
+                                         (locking db-lock
+                                           (when @closed
+                                             (throw (IllegalStateException. (str "Day " day " is closed"))))
+                                       
                                           
                                          (let [id (or (get @name-id name)
                                                       (create-new-id name))
-                                               btree (BTree/load r id)]
-                                           (.insert btree (int (- time-in-millis min-millis)) value true)
+                                               btree (try
+                                                       (BTree/load r id)
+                                                       (catch IOException e
+                                                         (throw (IOException. (str "Could not load BTree for " name " at " day))))) ]
+                                           (try (.insert btree (int (- time-in-millis min-millis)) value true)
+                                                (catch IOException e
+                                                  (throw (IOException. (str "Could not insert into " name " at " day ".") e)))) 
                                            (swap! write-count inc)
                                            (when (< 10000 @write-count)
                                              (.commit r)
                                              (reset! write-count 0))
-                                        ;Make extra commit
-                                           ))))
+                                       
+                                           )))
+                                       (catch IOException e
+                                         (error (str "Could not write to " name " at " date ". " (.getMessage e)) e))))
                             ;   clear-cache-counter (atom 10)
                                sync (fn sync []
                                       (when @closed
                                          (throw (IllegalStateException. (str "Day " day " is closed"))))
                                       (locking db-lock
                                         (when-not @closed
-                                          
-                                          (.commit r)
-                                          (when (= 10 (swap! clear-cache-counter (fn [c]
-                                                                                   (if (> 0 c)
-                                                                                     10
-                                                                                     (dec c)))))
-                                            (.clearCache r)
-
-                                            )
-                                          
-                                          
-                                          (reset! write-count 0))))
+                                          (try
+                                            (.commit r)
+                                            (when (= 10 (swap! clear-cache-counter (fn [c]
+                                                                                     (if (> 0 c)
+                                                                                       10
+                                                                                       (dec c)))))
+                                              (.clearCache r))
+                                            (reset! write-count 0)
+                                            (catch IOException e
+                                              (throw (IOException. (str "Could not sync " day ". " (.getMessage e)), e)))))))
                                
                                delete-name (fn delete-name []
                                              (when @closed
@@ -207,9 +234,12 @@
                 (locking lock
                   (reset! closed true)
                   (doseq [n-d @name-day]
-                    ((:close (val n-d))))
+                    (try
+                      ((:close (val n-d)))
+                      (catch IOException e
+                        (error (str "Could not close " (key n-d)) e))))
                   (when-let [not-closed (keys @name-day)]
-                    (println not-closed "was not closed"))))
+                    (info (str not-closed " was not closed")))))
                     
         being-deleted (ref #{})
         delete (fn delete-day [date]
@@ -457,6 +487,7 @@
 
 (defn add-to-db
   [value time keys]
+  ;(println "add-to-db")
   (when-let [env @*db-env*]
     (acquire-and-release env time true
                          ((:write *day*) keys time value))))
@@ -492,11 +523,13 @@
 
 
 (deftest by-interface
+  (println "by interface")
    (with-temp-dir
      (let [da (fn [s] (.parse (SimpleDateFormat. "yyyyMMdd HHmmss") s))]
        (using-db-env (.getPath *temp-dir*)
                      (remove-date (da "20010202 000000"))
                      (println (names (da "20010202 000000")))
+                     
                      (add-to-db 32 (da "20010202 000001") {:arne "Weise"})
                      (add-to-db 37 (da "20010202 000002") {:arne "Weise"})
                      (add-to-db 38 (da "20010202 000003") {:arne "Weise"})

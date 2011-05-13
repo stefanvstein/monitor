@@ -30,32 +30,33 @@
 	    (assoc result (keyword (key name)) (val name))) 
 	  {} names))
 
+(defn grouped-maps
+  "Expects a seq of maps, and returns a map with each key found and values with seqs of maps that contain that key
+  (grouped-maps  [{:a 1 :b 2} {:a 3}]) -> {:a [{:a 1, :b 2} {:a 3}], :b [{:a 1, :b 2}]}"
+  [non-grouped]
+  (reduce (fn [result name]
+            (reduce (fn [r per-subname] 
+                      (if-let [this-name (get result (key per-subname))]
+                        (assoc r (key per-subname) (conj this-name (val per-subname)))
+                        (assoc r (key per-subname) [(val per-subname)])))
+                    result 
+                    (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
+          (sorted-map) non-grouped))
+
 (defn get-names
   ([from to server]
-     (let [raw-names (.rawNames (server) from to)
-	   names (reduce (fn [result a-map]
-			   (conj result (names-as-keyworded a-map))) [] raw-names)]
-       (reduce (fn [result name]
-		 (reduce (fn [r per-subname] 
-			   (if-let [this-name (get result (key per-subname))]
-			     (assoc r (key per-subname) (conj this-name (val per-subname)))
-			     (assoc r (key per-subname) [(val per-subname)])))
-			 result 
-			 (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
-	       
-	       (sorted-map) names)))
+     (reduce (fn [result a-map]
+               (conj result (names-as-keyworded a-map)))
+             #{}
+             (.rawNames (server) from to)))
+      
   ([server]
-     (let [raw-names (.rawLiveNames server)
-	   names (reduce (fn [result a-map]
-			   (conj result (names-as-keyworded a-map))) [] raw-names)]
-       (reduce (fn [result name]
-		 (reduce (fn [r per-subname] 
-			   (if-let [this-name (get result (key per-subname))]
-			     (assoc r (key per-subname) (conj this-name (val per-subname)))
-			     (assoc r (key per-subname) [(val per-subname)])))
-			 result 
-			 (reduce (fn [a subname] (assoc a (key subname) name)) {} name)))
-	       (sorted-map) names))))
+     (reduce (fn [result a-map]
+               (conj result (names-as-keyworded a-map)))
+             #{}
+             (.rawLiveNames server))))
+     
+
 
 (defn transform
   [data func]

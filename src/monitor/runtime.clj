@@ -374,7 +374,7 @@
 			   (.add add-to-new-button)
 			   (.add close-button)) 
 	 BorderLayout/SOUTH))
-    (let [names (get-names (server))]
+    (let [names (grouped-maps (get-names (server)))]
       (.setLayout centerPanel (GridBagLayout.))
       (let [labelsOnCenter (atom [])
 	    combos-on-center (atom [])]
