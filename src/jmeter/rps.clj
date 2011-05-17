@@ -56,7 +56,7 @@
 (defn post [host port body]
     (client/post (str "http://" host ":" port "/plancom/")
                  {:body body
-                  :headers {"SoapAction" ""}}))
+                  :headers {"SoapAction" "\"\""}}))
 
 (defn rotation [host port pool start stop]
   (let [body (str "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:veh=\"http://www.qnamic.com/schema/request/report/vehiclerotation\" xmlns:com=\"http://www.qnamic.com/schema/common\">    <soapenv:Header/>    <soapenv:Body>       <veh:Report>          <veh:VehiclePoolId>" pool "</veh:VehiclePoolId>          <veh:StartDate>" start "</veh:StartDate>          <veh:EndDate>" stop "</veh:EndDate>       </veh:Report>    </soapenv:Body> </soapenv:Envelope>")]
@@ -246,17 +246,17 @@
         (binding [*out* fw]
           (dorun (arrivals host port (map first tra) days (map second tra)))))))
   
-(future
+  (future
     (let [pools (vehicles pool fordon?)
           stations (trains from identity)]
       (with-open [fw (FileWriter. "turnarounds.csv")]
         (binding [*out* fw]
           (dorun (turnarounds host port pools days stations))))))
-
-    (future
+  
+  (future
     (let [depots ["HGL" "G"]]
       (with-open [fw (FileWriter. "depottrains.csv")]
         (binding [*out* fw]
           (dorun (depot-trains host port depots days days))))))
-        
+  
 )

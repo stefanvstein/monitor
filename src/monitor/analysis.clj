@@ -1,29 +1,31 @@
 (ns monitor.analysis
-  (:use (clojure stacktrace pprint))
-  (:use (monitor commongui tools mem))
-  (:use (clojure.contrib profile))
+  (:use [clojure stacktrace pprint]
+        [monitor commongui tools mem]
+        [clojure.contrib profile])
 
-  (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
-			JPanel JScrollPane JSplitPane JTable JCheckBox JLabel Box JDialog JComboBox
-			JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
-			DefaultComboBoxModel GroupLayout BoxLayout GroupLayout$Alignment JPopupMenu
-			BorderFactory JSpinner$DateEditor  DefaultCellEditor Box KeyStroke JComponent))
-
-  (:import (javax.swing.table TableCellRenderer AbstractTableModel TableRowSorter))
-  (:import (java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout 
-		     GridBagLayout GridBagConstraints Insets BasicStroke ))
-  (:import (java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter ItemEvent ItemListener KeyEvent))
-  (:import (java.net Socket UnknownHostException))
-  (:import (java.io ObjectInputStream))
-  (:import (java.util Calendar Date Comparator))
-  (:import (java.text SimpleDateFormat DecimalFormat))
-  (:import (java.beans PropertyChangeListener))
-  (:import (org.jfree.chart.axis NumberAxis))
-  (:import (org.jfree.chart.event ChartProgressEvent ChartProgressListener RendererChangeEvent))
-  (:import (org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities))
-  (:import (org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem FixedMillisecond))
-  (:import (org.jfree.chart.renderer.xy SamplingXYLineRenderer StandardXYItemRenderer XYSplineRenderer))
-  (:import (monitor SplitDateSpinners)))
+  (:import [javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
+            JPanel JScrollPane JSplitPane JTable JCheckBox JLabel Box JDialog JComboBox
+            JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
+            DefaultComboBoxModel GroupLayout BoxLayout GroupLayout$Alignment JPopupMenu
+            BorderFactory JSpinner$DateEditor  DefaultCellEditor Box KeyStroke JComponent]
+           [javax.swing.table TableCellRenderer AbstractTableModel TableRowSorter]
+           [java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout
+            GridBagLayout GridBagConstraints Insets BasicStroke ]
+           [java.awt.event WindowAdapter ActionListener MouseAdapter ComponentAdapter
+            ItemEvent ItemListener KeyEvent]
+           [java.net Socket UnknownHostException]
+           [java.io ObjectInputStream IOException File]
+           [java.util Calendar Date Comparator Properties]
+           [java.text SimpleDateFormat DecimalFormat]
+           [java.beans PropertyChangeListener]
+           [org.jfree.chart.axis NumberAxis]
+           [org.jfree.chart.event ChartProgressEvent ChartProgressListener RendererChangeEvent]
+           [org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities]
+           [org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem FixedMillisecond]
+           [org.jfree.chart.renderer.xy SamplingXYLineRenderer StandardXYItemRenderer XYSplineRenderer]
+           [monitor SplitDateSpinners]
+           [com.google.common.io Files]
+           [jdbm RecordManagerFactory RecordManagerOptions]))
 
 
 
@@ -108,7 +110,7 @@
   
 
 
-(defn on-add-to-analysis-new [from to shift name-values func-string
+(defn on-add-to-analysis [from to shift name-values func-string
 			  { time-series-coll :time-series
 			   disable-col :disable-collection
 			   enable-col :enable-collection
@@ -175,6 +177,68 @@
                                   (assoc r (key e) (transform (val e) func)))
                                 {}
                                 data))
+        create-new-time-serie (fn [data-key]
+				(let [identifier (name-as-comparable data-key)
+				      serie (TimeSeries. identifier)
+				      color (colors)]
+				  (. serie setNotify false)
+                                  (. time-series-coll addSeries serie)
+				  (let [visible-fn (fn ([]
+							  (if-let [index (index-by-name time-series-coll identifier)]
+							    (.. chart (getPlot) (getRenderer) (getItemVisible index 0 ))
+							    false))
+						     ([visible]
+							(when-let [index (index-by-name time-series-coll identifier)]
+							  (.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))
+							  )))
+					new-index (dec (count (.getSeries time-series-coll)))]
+                                    (println "new-index" new-index)
+				    (doto (.. chart 
+					      (getPlot) (getRenderer))
+				      (.setSeriesPaint new-index color)
+				      (.setSeriesStroke new-index (BasicStroke. 2.0)))
+                                    (add-to-table data-key color visible-fn)
+                                    (dorun (map (fn [i] (add-column i)) (keys data-key)))
+                                    serie)))
+        reduce-samples (fn reduce-samples [data] 
+                         (if (next data) 
+                           (loop [s (next data), result data, previous (first data), was-equal false]
+                             (let [current (first s)]
+                               (if-let [following (next s)]
+                                 (if (= (val previous) (val current))
+                                   (if was-equal
+                                     (recur following (dissoc result (key previous)) current true)
+                                     (recur following result current true))
+                                   (recur following result current false))
+                                 (if (= (val previous) (val current)) 
+                                   (if was-equal
+                                     (dissoc result (key previous))
+                                     result)
+                                   result))))
+                           data))
+        nan-distance (condp = func-string
+                         "Raw" (* 30 1000)
+                         "Change/Second" (* 30 1000)
+                         "Average/Minute" (* 2 60 1000)
+                         "Mean/Minute" (* 2 60 1000)
+                         "Min/Minute" (* 2 60 1000)
+                         "Max/Minute" (* 2 60 1000)
+                         "Change/Minute" (* 2 60 1000)
+                         "Average/Hour" (* 2 60 60 1000)
+                         "Mean/Hour" (* 2 60 60 1000)
+                         "Min/Hour" (* 2 60 60 1000)
+                         "Max/Hour" (* 2 60 60 1000)
+                         "Change/Hour" (* 2 60 60 1000)
+                         "Average/Day" (* 2 24 60 60 1000)
+                         "Mean/Day" (* 2 24 60 60 1000)
+                         "Min/Day" (* 2 24 60 60 1000)
+                         "Max/Day" (* 2 24 60 60 1000))
+
+        store-to-disk (fn [keys data])
+        get-from-disk (fn [keys]
+                        (sorted-map))
+        remove-from-disk (fn [keys])
+	
         get-data-for (fn get-data-for [name date-pairs]
                        (let [update (fn [result data]
                                                 (if (seq (val data))
@@ -188,21 +252,46 @@
                                  {}
                                  date-pairs)))
         
-
+                                        ; Implementera disk
+                                    
+                                    
+                                        ;Implementera abort.
+                                        ;Sätt hårdkodad färg på strecket
         update-method (fn update-method [to-update data]
-                        (let [update (fn []
+                        (let [update (fn update []
+                                       (stop-chart-notify)
+                                       (try
+                                       (doseq [data data]
                                         ; Få skift time att lägga till shift nyckel också, ok
                                         ;for each data
                                         ; hämta eller skapa timeserie, behövs inte
+                                         (let [all-values (merge (get-from-disk (key data)) (val data))
+                                               data-key (assoc (key data) :type func-string)]
+                                           (store-to-disk  (name-as-comparable data-key) all-values)
+                                           (let [calc-data (reduce-samples (with-nans (transform all-values func-string) nan-distance))
+                                                 ;(transform all-values func-string)
+                                                 ]
+                                             (let [time-serie (if-let [serie (. time-series-coll getSeries (name-as-comparable data-key))]
+                                                                serie
+                                                                (create-new-time-serie data-key))]
+                                               (.clear time-serie)
+                                               (doseq [d calc-data]
+                                                 (.add time-serie (TimeSeriesDataItem.
+                                                                   (FixedMillisecond. (key d))
+                                                                   ^Number (val d)))))
+                                             ))
                                         ; merge innehåll med  motsvarande temp från disk
                                         ;skriv nya temp, i bakgrunden
                                         ;transform
                                         ;skapa nans
                                         ;reducera samples
                                        ; skapa och stoppa in ny serie
-                                         (when data
-                                           (pprint data)
-                                           (flush)))]
+                                       (when data
+    ;                                     (println "Data retrieved" )
+   ;                                      (pprint data)
+                                         ;(flush)
+                                         ))
+                                       (finally (start-chart-notify))))]
                             (if-let [d (first to-update)]
                               (do (future
                                     (let [data (get-data-for (key d) (val d))]
@@ -220,7 +309,7 @@
                   (SwingUtilities/invokeLater (fn []
                                                 (update-method (next to-update) data)))))))))
 
-(defn on-add-to-analysis [from to shift name-values func-string
+(defn on-add-to-analysis-OLD [from to shift name-values func-string
 			  { time-series-coll :time-series
 			   disable-col :disable-collection
 			   enable-col :enable-collection
