@@ -1,8 +1,7 @@
-(defproject Monitor "0.0.8"
+(defproject Monitor "0.0.9"
   :description "FIXME: write"
   :dependencies [[org.clojure/clojure "1.2.0"]
                  [org.clojure/clojure-contrib "1.2.0"]
-		 [com.sleepycat/je "4.0.92"]
 		 [jfree/jfreechart "1.0.13"]
 		 [jfree/jcommon "1.0.16"]
 		 [my/jchart2d "3.1.0"]
@@ -10,7 +9,7 @@
                  [org.apache.httpcomponents/httpclient "4.0.3"]
                  [commons-codec "1.4"]
                  [commons-io "1.4"]
-                 [org.jboss.netty/netty "3.2.4.Final"]
+;                 [org.jboss.netty/netty "3.2.4.Final"]
                  [com.google.guava/guava "r09"]
                  [com.google.protobuf/protobuf-java "2.4.0a"]]
   :min-lein-version "1.4.1" 

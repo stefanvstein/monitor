@@ -5,7 +5,7 @@
 				 sync-db
 				 clean-stored-data-older-than
 				 compress-older-than]])
-    (:use [clojure.contrib.logging :only [info]])
+  (:use [clojure.contrib.logging :only [info]])
   (:use [monitor.jmxcollection :only [jmx-java6]])
   (:use [monitor.server :only [tasks-to-start
 			       serve]])
@@ -16,7 +16,6 @@
 				 shutdown-jmx]])
   (:use [monitor.termination :only [terminating?
 				    term-sleep]])
-  (:use [monitor.countdb :only [jmx-db-record-counter]])
   (:use [monitor.perfmonservice :only (perfmon-connection)])
   (:use [monitor.jmxremote :only [jmx-remote]]))
 
@@ -81,7 +80,6 @@
 						(* 1000 60 live-minutes)))))))))
       
       (using-history history-directory
-		     (jmx-db-record-counter "monitor.server")
 		     
 		     (dosync
 		      (alter tasks-to-start conj
