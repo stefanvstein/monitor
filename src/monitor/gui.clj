@@ -3,6 +3,7 @@
   (:use [monitor.analysis :only [analysis-add-dialog new-analysis-panel]])
   (:use [monitor.runtime :only [runtime-add-dialog new-runtime-panel get-new-data]])
   (:use [monitor.commongui :only [new-window-fn]])
+  (:use [monitor.clientdb :only [close-and-remove-db dont-remove-on-terminate]])
   (:import (javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
 			JPanel JLabel JDialog JTextField WindowConstants SwingUtilities
 			GroupLayout GroupLayout$Alignment KeyStroke JComponent))
@@ -246,9 +247,21 @@
 	 (.setDefaultCloseOperation (JFrame/DISPOSE_ON_CLOSE))
 	 (.addWindowListener (proxy [WindowAdapter] []
 			       (windowClosed [window-event]
-					 (swap! frames-and-content #(dissoc % frame))
-					 (proxy-super windowClosed window-event)
-					 (when (= 0 (count @frames-and-content)) (exit)))))
+                                 (let [cont (get @frames-and-content frame)]
+                                   (when-let [cancellation (:cancellation cont)] 
+                                     (SwingUtilities/invokeLater (fn []
+                                                                   (swap! cancellation inc))))
+                                   (when-let [db-and-dir (:db-and-dir cont)]
+                                     (SwingUtilities/invokeLater (fn []
+                                                                   (close-and-remove-db db-and-dir)
+                                                                   (dont-remove-on-terminate db-and-dir)))))
+                                 
+                                        ;cancel things
+                                        ;remove db in future
+                                 (swap! frames-and-content #(dissoc % frame))
+                                 
+                                 (proxy-super windowClosed window-event)
+                                 (when (= 0 (count @frames-and-content)) (exit)))))
 	 
 	 (.setTitle (:name contents))
 	 (.setName (:name contents))

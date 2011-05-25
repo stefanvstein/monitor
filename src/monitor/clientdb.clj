@@ -21,10 +21,35 @@
                             (.delete)))
            db (RecordManagerFactory/createRecordManager path
                                                      (doto (Properties.)
-                                                       (.setProperty RecordManagerOptions/THREAD_SAFE (Boolean/toString true))
-                                                       (.setProperty RecordManagerOptions/AUTO_COMMIT (Boolean/toString true))
-                                                       (.setProperty RecordManagerOptions/CACHE_TYPE "none")))]
-     {:db db :directory directory}))
+                                                       (.setProperty RecordManagerOptions/CACHE_TYPE "none")))
+           lock (Object.)
+           closed (atom false)
+           sync-db (proxy [RecordManager] []
+                     (insert [o]
+                       (locking lock
+                         (if-not @closed
+                           (.insert db o))
+                           (throw (IOException. "closed"))))
+                     (delete [r]
+                       (locking lock (when-not @closed (.delete db r))))
+                     (update [r o]
+                       (locking lock (if-not @closed (.update db r o)
+                                             (throw (IOException. "closed")))))
+                     (fetch [r]
+                       (locking lock (when-not @closed (.fetch db r)
+                                               (throw (IOException. "closed" )))))
+                     (close []
+                       (locking lock (when-not @closed
+                                       (.close db )
+                                       (reset! closed true))))
+                     (defrag []
+                       (locking lock (when-not @closed (.defrag db))))
+                     (commit []
+                       (locking lock (when-not @closed (.commit db))))
+                     (rollback []
+                       (locking lock (when-not @closed (.rollback db)))))]
+                     
+     {:db sync-db :directory directory}))
   ([]
      (create-db (Files/createTempDir))))
   

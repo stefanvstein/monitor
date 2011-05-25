@@ -1,13 +1,14 @@
 (ns monitor.analysis
   (:use [clojure stacktrace pprint]
-        [monitor commongui tools mem]
+        [monitor commongui tools mem clientdb]
         [clojure.contrib profile])
 
   (:import [javax.swing UIManager JFrame JButton JOptionPane JMenuBar JMenu JMenuItem 
             JPanel JScrollPane JSplitPane JTable JCheckBox JLabel Box JDialog JComboBox
             JTextField WindowConstants JSpinner SpinnerDateModel SwingUtilities
             DefaultComboBoxModel GroupLayout BoxLayout GroupLayout$Alignment JPopupMenu
-            BorderFactory JSpinner$DateEditor  DefaultCellEditor Box KeyStroke JComponent]
+            BorderFactory JSpinner$DateEditor  DefaultCellEditor Box KeyStroke JComponent
+            JProgressBar]
            [javax.swing.table TableCellRenderer AbstractTableModel TableRowSorter]
            [java.awt Dimension BorderLayout Color FlowLayout Component Point GridLayout
             GridBagLayout GridBagConstraints Insets BasicStroke ]
@@ -19,10 +20,12 @@
            [java.text SimpleDateFormat DecimalFormat]
            [java.beans PropertyChangeListener]
            [org.jfree.chart.axis NumberAxis]
+           [org.jfree.chart.plot ValueMarker]
            [org.jfree.chart.event ChartProgressEvent ChartProgressListener RendererChangeEvent]
-           [org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities]
-           [org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem FixedMillisecond]
-           [org.jfree.chart.renderer.xy SamplingXYLineRenderer StandardXYItemRenderer XYSplineRenderer]
+           [org.jfree.chart ChartFactory ChartPanel JFreeChart ChartUtilities ChartMouseListener]
+           [org.jfree.data.time TimeSeries TimeSeriesCollection TimeSeriesDataItem FixedMillisecond Millisecond]
+           [org.jfree.chart.renderer.xy StandardXYItemRenderer XYSplineRenderer]
+           [org.jfree.chart.entity AxisEntity]
            [monitor SplitDateSpinners]
            [com.google.common.io Files]
            [jdbm RecordManagerFactory RecordManagerOptions]))
@@ -113,18 +116,23 @@
 (defn on-add-to-analysis [from to shift name-values func-string
 			  { time-series-coll :time-series
 			   disable-col :disable-collection
+                           progressbar :progress-bar
+                           cancel-button :cancel-button
 			   enable-col :enable-collection
 			   colors :colors
 			   ^JFreeChart chart  :chart
 			   add-to-table :add-to-table
 			   add-column :add-column
 			   status-label :status-label
-			   data-queue :transfer-queue
-			   num-to-render :num-to-render
+                           num-to-render :num-to-render
 			   num-rendered :num-rendered
-			   name-as-comparable :name-as-comparable}
+			   name-as-comparable :name-as-comparable
+                           db :db-and-dir
+                           db-entries :db-entries
+                           cancellation :cancellation}
 			  server]
-  (let [date-pairs-for-names (fn date-pairs-for-names [from to spec]
+  (let [my-cancellation @cancellation
+        date-pairs-for-names (fn date-pairs-for-names [from to spec]
                                (let [get-names-according-to-spec-for (fn [from to]
                                                                        (according-to-specs (get-names from to server) [(apply hash-map spec)]))
                                      
@@ -139,11 +147,13 @@
                                                              #{}
                                                              (vals all-names-per-dates))]
                                  (reduce (fn [r name]
-                                           (assoc r name (filter identity
-                                                                 (map (fn [i]
-                                                                        (when (contains? (val i) name)
-                                                                          (key i)))
-                                                                      all-names-per-dates))))
+                                           (if (> @cancellation my-cancellation)
+                                             {}
+                                             (assoc r name (filter identity
+                                                                   (map (fn [i]
+                                                                          (when (contains? (val i) name)
+                                                                            (key i)))
+                                                                        all-names-per-dates)))))
                                          {}
                                          all-names-found)))
         stop-chart-notify (fn stop-chart-notify []
@@ -181,24 +191,23 @@
 				(let [identifier (name-as-comparable data-key)
 				      serie (TimeSeries. identifier)
 				      color (colors)]
-				  (. serie setNotify false)
                                   (. time-series-coll addSeries serie)
-				  (let [visible-fn (fn ([]
-							  (if-let [index (index-by-name time-series-coll identifier)]
-							    (.. chart (getPlot) (getRenderer) (getItemVisible index 0 ))
-							    false))
-						     ([visible]
-							(when-let [index (index-by-name time-series-coll identifier)]
-							  (.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))
-							  )))
-					new-index (dec (count (.getSeries time-series-coll)))]
-                                    (println "new-index" new-index)
-				    (doto (.. chart 
-					      (getPlot) (getRenderer))
-				      (.setSeriesPaint new-index color)
-				      (.setSeriesStroke new-index (BasicStroke. 2.0)))
+                                  (let [visible-fn (fn ([]
+                                                          (if-let [index (index-by-name time-series-coll identifier)]
+                                                            (.. chart (getPlot) (getRenderer) (getItemVisible index 0 ))
+                                                            false))
+                                                     ([visible]
+                                                        (when-let [index (index-by-name time-series-coll identifier)]
+                                                          (.. chart (getPlot) (getRenderer) (setSeriesVisible index visible)))))
+                                        new-index (dec (count (.getSeries time-series-coll)))]
+                                        ;(println "new-index" new-index)
+                                    (doto (.. chart 
+                                              (getPlot) (getRenderer))
+                                      (.setSeriesPaint new-index color)
+                                      (.setSeriesStroke new-index (BasicStroke. 2.0)))
                                     (add-to-table data-key color visible-fn)
-                                    (dorun (map (fn [i] (add-column i)) (keys data-key)))
+                                    (doseq [i (keys data-key)]
+                                      (add-column i))
                                     serie)))
         reduce-samples (fn reduce-samples [data] 
                          (if (next data) 
@@ -234,10 +243,26 @@
                          "Min/Day" (* 2 24 60 60 1000)
                          "Max/Day" (* 2 24 60 60 1000))
 
-        store-to-disk (fn [keys data])
+        store-to-disk (fn [keys data]
+                        ;(println "store " keys (class keys))
+                        (try (let [old (get @db-entries keys)]
+                               (let [id (.insert (:db db) data)]
+                                 (dosync (alter db-entries assoc keys id)))
+                               (if old
+                                 (doto (:db db)
+                                   (.delete old)
+                                   (.commit)
+                                   (.defrag)
+                                   (.commit))
+                                 (.commit (:db db))))
+                             (catch IOException _)))
         get-from-disk (fn [keys]
-                        (sorted-map))
-        remove-from-disk (fn [keys])
+                                        ;                       (println "get" keys (class keys))
+                        (try
+                          (if-let [id (get @db-entries keys)]
+                            (.fetch (:db db) id)
+                            (sorted-map))
+                          (catch IOException _)))
 	
         get-data-for (fn get-data-for [name date-pairs]
                        (let [update (fn [result data]
@@ -252,259 +277,72 @@
                                  {}
                                  date-pairs)))
         
-                                        ; Implementera disk
-                                    
-                                    
-                                        ;Implementera abort.
-                                        ;Sätt hårdkodad färg på strecket
-        update-method (fn update-method [to-update data]
+        update-method (fn update-method [to-update data to-render render-count]
                         (let [update (fn update []
+                                       (.setVisible progressbar true)
+                                       (.setVisible cancel-button true) 
+                                       (.setMaximum progressbar @num-to-render)
+                                       (.setString progressbar (str @num-rendered "/" @num-to-render))
+                                       
                                        (stop-chart-notify)
                                        (try
                                        (doseq [data data]
-                                        ; Få skift time att lägga till shift nyckel också, ok
-                                        ;for each data
-                                        ; hämta eller skapa timeserie, behövs inte
-                                         (let [all-values (merge (get-from-disk (key data)) (val data))
-                                               data-key (assoc (key data) :type func-string)]
+
+                                         (let [data-key (assoc (key data) :type func-string)
+                                               all-values (merge (get-from-disk (name-as-comparable data-key)) (val data))]
                                            (store-to-disk  (name-as-comparable data-key) all-values)
-                                           (let [calc-data (reduce-samples (with-nans (transform all-values func-string) nan-distance))
-                                                 ;(transform all-values func-string)
-                                                 ]
+                                           (let [calc-data (reduce-samples (with-nans (transform all-values func-string) nan-distance))]
                                              (let [time-serie (if-let [serie (. time-series-coll getSeries (name-as-comparable data-key))]
                                                                 serie
                                                                 (create-new-time-serie data-key))]
                                                (.clear time-serie)
                                                (doseq [d calc-data]
                                                  (.add time-serie (TimeSeriesDataItem.
-                                                                   (FixedMillisecond. (key d))
-                                                                   ^Number (val d)))))
-                                             ))
-                                        ; merge innehåll med  motsvarande temp från disk
-                                        ;skriv nya temp, i bakgrunden
-                                        ;transform
-                                        ;skapa nans
-                                        ;reducera samples
-                                       ; skapa och stoppa in ny serie
-                                       (when data
-    ;                                     (println "Data retrieved" )
-   ;                                      (pprint data)
-                                         ;(flush)
-                                         ))
-                                       (finally (start-chart-notify))))]
-                            (if-let [d (first to-update)]
+                                                                   (Millisecond. (key d))
+                                                                   ^Number (val d))))))))
+                                       
+                                       (finally (start-chart-notify)
+                                                (.setValue progressbar (swap! num-rendered inc))
+                                                (.setString progressbar (str @num-rendered "/" @num-to-render)))))]
+                          (if-let [d (let [d (first to-update)]
+                                       (if (> @cancellation my-cancellation)
+                                         (do
+                                           (swap! num-rendered - render-count)
+                                           (swap! num-to-render - to-render)
+                                           nil)
+                                         d))]
                               (do (future
                                     (let [data (get-data-for (key d) (val d))]
-                                      (SwingUtilities/invokeLater (fn [] (update-method (next to-update) data)))))
+                                      (SwingUtilities/invokeLater (fn [] (update-method (next to-update) data to-render (inc render-count))))))
                                   (update))
                               (do (update)
-                                  (println "Done")))))]
+                                  (update-chart chart)
+                                  (when (>= @num-rendered @num-to-render)
+                                    (.setVisible cancel-button false)
+                                    (doto progressbar
+                                      (.setVisible false)
+                                      (.setMaximum 0)
+                                      (.setValue 0)
+                                      (.setString ""))
+                                    (reset! num-to-render 0)
+                                    (reset! num-rendered 0))))))]
 
-          (println "Getting names")
           (future
+            (SwingUtilities/invokeLater (fn [] (when-not (.isVisible progressbar)
+                                                 (.setVisible cancel-button true)
+                                                 (.setVisible progressbar true)
+                                                 (.setString progressbar "Getting names"))))
             (let [to-update (date-pairs-for-names from to name-values)]
               (when (seq to-update)
-                (SwingUtilities/invokeLater (fn [] (println "Getting first data")))
+                (SwingUtilities/invokeLater (fn []
+
+                                              (swap! num-to-render + (count to-update))
+                                              (.setMaximum progressbar @num-to-render)
+                                              (.setString progressbar (str @num-rendered "/" @num-to-render))
+                                              ))
                 (let [data (get-data-for (key (first to-update)) (val (first to-update)))]
                   (SwingUtilities/invokeLater (fn []
-                                                (update-method (next to-update) data)))))))))
-
-(defn on-add-to-analysis-OLD [from to shift name-values func-string
-			  { time-series-coll :time-series
-			   disable-col :disable-collection
-			   enable-col :enable-collection
-			   colors :colors
-			   ^JFreeChart chart  :chart
-			   add-to-table :add-to-table
-			   add-column :add-column
-			   status-label :status-label
-			   data-queue :transfer-queue
-			   num-to-render :num-to-render
-			   num-rendered :num-rendered
-			   name-as-comparable :name-as-comparable}
-			  server]
-
-  (let [collection-subscribers (atom [])
-	stop-chart-notify (fn stop-chart-notify []
-                            (.setNotify chart false)
-                            (disable-col))
-	start-chart-notify (fn start-chart-notify []
-                             (.setNotify chart true)
-			     (enable-col))
-
-	shift-time (if (= 0 shift)
-		     identity
-		     (fn [a] (with-keys-shifted a (fn [d] d) (fn [#^Date d] (Date. (long (+ (.getTime d) shift)))))))
-		     
-	create-new-time-serie (fn [data-key]
-				(binding [*stime* false]
-				(stime "create-new-time-serie"
-				(let [identifier (name-as-comparable data-key)
-				      serie (TimeSeries. identifier)
-				      color (colors)]
-				  (. serie setNotify false)
-				  (stime " addSerie" (. time-series-coll addSeries serie))
-;				  (println "Count" (.getSeriesCount graph))
-				  (let [visible-fn (fn ([]
-							  (if-let [index (index-by-name time-series-coll identifier)]
-							    (.. chart (getPlot) (getRenderer) (getItemVisible index 0 ))
-							    false))
-						     ([visible]
-							(when-let [index (index-by-name time-series-coll identifier)]
-							  (.. chart (getPlot) (getRenderer) (setSeriesVisible index visible))
-							  )))
-					new-index (dec (count (.getSeries time-series-coll)))]
-				    (doto (.. chart 
-					      (getPlot) (getRenderer))
-				      (.setSeriesPaint new-index color);(Color. (.getRed color) (.getGreen color) (.getBlue color) 200))
-				      (.setSeriesStroke new-index (BasicStroke. 2.0)))
-				    
-				    
-				    (stime " add-to-table" (add-to-table data-key color visible-fn))
-				  (stime " add-column" (dorun (map (fn [i] (add-column i)) (keys data-key)))) 
-				  serie)))))
-	remove-with-empty-cols-as-val (fn [data]
-					(let [r (into {} (filter #(seq (val %)) data))]
-					  (when (seq r)
-					    r)))
-
-	updatechart (fn [data]
-;		      (let [d (remove-with-empty-cols-as-val data)]
-;			(when d
-                      (swap! data-queue conj data)
-                      (SwingUtilities/invokeLater
-                       
-                       (fn []
-                                        ;#(.setText status-label (str "Rendering "))
-                         
-
-                                
-                                  (let [datas (into [] @data-queue)]
-                                    (when-not (zero? (count datas))
-                                      (swap! data-queue (fn [dq] (vec (drop (count datas) dq))))
-                                      (stop-chart-notify)
-                                      (try
-                                        ;(doseq [data datas]
-                                        (let [dat (last datas)
-                                              data (reduce (fn [r e]
-                                                            (assoc r (key e) (transform (val e) func-string)))
-                                                          {}
-                                                          dat)]
-
-                                        (dorun (map (fn [data]
-                                                      (let [data-key (let [dk (assoc (key data) :type func-string)]
-								(if (= 0 shift)
-								  dk
-								  (let [df (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss")]
-								    (assoc dk :shifted (str (.format df from) " to " (.format df
-															      (Date. (long (+ (.getTime ^Date from) shift)))))))))
-						     ;make-double-values (fn [e] (into (sorted-map) (map #(first {(key %) (double (val %))}) e)))
-											      data-values (val data) #_(make-double-values (val data))    ;???????
-
-						     ^TimeSeries time-serie (if-let [serie (. time-series-coll getSeries (name-as-comparable data-key))]
-									      serie
-									      (create-new-time-serie data-key))
-						     data-from-serie (binding [*stime* false] (stime "time-serie-to-sorted-map" (time-serie-to-sortedmap time-serie))) ; use last-from-timeserie and keep the old in the time serie
-						     data-with-new-data (binding [*stime* false] (stime "merge with new" (merge data-from-serie data-values)))
-						     nan-distance (condp = func-string
-								      "Raw" (* 30 1000)
-								      "Change/Second" (* 30 1000)
-								      "Average/Minute" (* 2 60 1000)
-								      "Mean/Minute" (* 2 60 1000)
-								      "Min/Minute" (* 2 60 1000)
-								      "Max/Minute" (* 2 60 1000)
-								      "Change/Minute" (* 2 60 1000)
-								      "Average/Hour" (* 2 60 60 1000)
-								      "Mean/Hour" (* 2 60 60 1000)
-								      "Min/Hour" (* 2 60 60 1000)
-								      "Max/Hour" (* 2 60 60 1000)
-								      "Change/Hour" (* 2 60 60 1000)
-								      "Average/Day" (* 2 24 60 60 1000)
-								      "Mean/Day" (* 2 24 60 60 1000)
-								      "Min/Day" (* 2 24 60 60 1000)
-								      "Max/Day" (* 2 24 60 60 1000))
-						     data-with-nans (with-nans data-with-new-data nan-distance)
-						     reduce-samples (fn reduce-samples [data] 
-								      (if (next data) 
-									(loop [s (next data), result data, previous (first data), was-equal false]
-									  (let [current (first s)]
-									    (if-let [following (next s)]
-									      (if (= (val previous) (val current))
-										(if was-equal
-										  (recur following (dissoc result (key previous)) current true)
-										  (recur following result current true))
-										(recur following result current false))
-									      (if (= (val previous) (val current)) 
-										(if was-equal
-										  (dissoc result (key previous))
-										  result)
-										result))))
-									data))
-					;reduced-samples (reduce-samples data-with-nans)
-						     reduced-samples data-with-nans
-						     
-						     temp-serie (doto (TimeSeries. "") (.setNotify false))
-						     new-serie (binding [*stime* false] (stime "fill serie" (reduce (fn [^TimeSeries r i]
-									 (.add r  (TimeSeriesDataItem. 
-										   (FixedMillisecond. (key i)) ;Fixed is better than Millisecond
-										   ^Number (val i)))
-									 r)
-								       temp-serie reduced-samples)))]
-						 
-						    
-						 (.clear time-serie)
-						 (binding [*stime* false] (stime "addAndOrUpdate" (.addAndOrUpdate time-serie new-serie)))))
-					       data)))
-
-				  
-		       (catch Exception e
-			 (.printStackTrace e))
-		       (finally (start-chart-notify))))))))]
-    
-    (future
-     
-      
-      (try
-	(SwingUtilities/invokeLater (fn []
-				      (.setText status-label "Retrieving...")))
-	(try
-					;	(if (= "Raw" func-string)
-          (let [days (full-days-between from to)
-                alldata (atom {})]
-            (swap! num-to-render (fn [d] (+ d (count days))))
-
-
-            (doseq [e days]
-              (doseq [nv (according-to-specs (reduce (fn [r e]
-                                                       (reduce (fn [r e]
-                                                                 (conj r e)) r e))
-                                                     #{} (vals (grouped-maps (get-names (first e) (second e) server))))
-                                             [(apply hash-map name-values)])]
-                            (println "get" nv e)
-                            (swap! alldata (fn [a] (reduce (fn [r l]
-                                                             (if (seq (val l))
-                                                               (if-let [current (get r (key l))]
-                                                                 (assoc r (key l) (merge current (val l)))
-                                                                 (assoc r (key l) (val l)))
-                                                               r))
-                                                           a
-                                                           (shift-time (get-data (first e)
-                                                                                 (second e)
-                                                                                 (reduce #(conj %1 (key %2) (val %2)) [] nv)
-                                                                                server)))))
-                       
-                            (updatechart @alldata))))
-	(finally
-	(SwingUtilities/invokeLater (fn []
-;				      (when (= @num-rendered @num-to-render)
-					(reset! num-rendered 0)
-					(reset! num-to-render 0)
-					(.setText status-label " ")))))
-	
-	(update-chart chart)
-	
-	(catch Exception e
-	  (.printStackTrace e))))))
+                                                (update-method (next to-update) data (count to-update) 0)))))))))
 
 
 
@@ -736,7 +574,18 @@
 
 (defn new-analysis-panel []
 
-  (let [status-label (JLabel. " ")
+  (let [db-and-dir (remove-on-terminate (create-db))
+        db-entries (ref {})
+        status-label (JLabel. " ")
+        progressbar (doto (JProgressBar.)
+                      (.setVisible false)
+                      (.setStringPainted true))
+        cancellation (atom 0)
+        cancel-button (doto (JButton. "Cancel")
+                        (.setVisible false)
+                        (.addActionListener (proxy [ActionListener] []
+                                              (actionPerformed [_]
+                                                (swap! cancellation inc)))))
 	connection-label (JLabel. " ")
 	comparables-and-names (atom {})			   	
 	name-as-comparable (memoize (fn [name]
@@ -757,7 +606,11 @@
 			 (.add (doto status-label
 				 (.addPropertyChangeListener (proxy [PropertyChangeListener] []
 							       (propertyChange [e] (if (= "text" (.getPropertyName e))
-										     (.invalidateLayout layout p)))))))))
+										     (.invalidateLayout layout p)))))))
+                         (.add (Box/createRigidArea (Dimension. 5 0)))
+                         (.add cancel-button)
+                         (.add (Box/createRigidArea (Dimension. 2 0)))
+                         (.add progressbar)))
 
 	panel (JPanel.)
 	enabled-collection-notify (atom true)
@@ -781,12 +634,24 @@
 		
 		)
 		
-	
-
+	remove-from-disk (fn [name]
+                           (let [to-remove (dosync (let [to-remove (get @db-entries name)]
+                                                     (alter db-entries dissoc name)
+                                                     to-remove))]
+                             (future (try
+                                       (doto (:db db-and-dir)
+                                            (.remove to-remove)
+                                            (.commit)
+                                            (.defrag)
+                                            (.commit))
+                                          (catch IOException e
+                                            (println e))))))
+                           
 
 	tbl-model (create-table-model
 		   (fn [row] 
-		     (.removeSeries time-series (.getSeries time-series (name-as-comparable row))))
+		     (.removeSeries time-series (.getSeries time-series (name-as-comparable row)))
+                     (remove-from-disk (name-as-comparable row)))
 		   (fn [row-num color]
 		     (.. chart (getPlot) (getRenderer) (setSeriesPaint row-num color))))
 
@@ -805,6 +670,19 @@
 		  (swap! current-row (fn [_] (.convertRowIndexToModel table row)))
 		  (.show popupMenu table x y)))
 	highlighted (atom nil)
+        crosshair-domain-marker (atom nil)
+        mouseToX (fn mouseToX [event chart-panel]
+          (let [entity (.getEntity event)]
+            (when (instance? AxisEntity entity)
+              (let [axis (.getAxis entity)
+                    plot (.getPlot axis)
+                    domain-axis (.getDomainAxis plot)]
+                (when (= domain-axis axis)
+                  (let [p (.translateScreenToJava2D chart-panel (.getPoint (.getTrigger event)))
+                        plotArea (.getScreenDataArea chart-panel)
+                        plot (.getPlot (.getChart event))
+                        axis (.getDomainAxis plot)]
+                    (.java2DToValue axis (.getX p) plotArea (.getDomainAxisEdge plot))))))))
 	mouse-table-adapter (proxy [MouseAdapter] []
 			      (mousePressed [event]
 					    (when (.isPopupTrigger event)
@@ -815,7 +693,11 @@
 			      (mouseMoved [event]
 					  (let [x (.getX event)
 						y (.getY event)
-						row (.convertRowIndexToModel table (.rowAtPoint table (Point. x y)))
+                                                
+						row (do ;(println "convertRowIndexToModel")
+                                                        (try
+                                                          (.convertRowIndexToModel table (.rowAtPoint table (Point. x y)))
+                                                          (finally #_(println "Done convertRowIndexToModel"))))
 						renderer (.. chart (getPlot) (getRenderer))
 						stroke (.getSeriesStroke renderer row)]
 					    (when-let [hl @highlighted]
@@ -832,58 +714,62 @@
 					     (let [renderer (.. chart (getPlot) (getRenderer))]
 					       (.setSeriesStroke renderer (first hl) (second hl))
 											       (reset! highlighted nil)) 
-					     )))
-	]
+					     )))]
 					(.setForegroundAlpha (.getPlot chart) 0.8)
 					(.setDrawSeriesLineAsPath (.getRenderer (.getPlot chart)) true)
-;					(.setRangeCrosshairLockedOnData (.getPlot chart) false)
+					;(.setRangeCrosshairLockedOnData (.getPlot chart) false)
     ;(.setRenderer (.getPlot chart) (XYSplineRenderer. 1))
 
 		(.addProgressListener chart (proxy [ChartProgressListener] []
 					      (chartProgress [e]
-							     (when (= (.getType e) ChartProgressEvent/DRAWING_FINISHED)
-							       (when-let [date (let [l (long (.getDomainCrosshairValue (.getPlot chart)))]
-									   (if (zero? l)
-									     nil
-									     (Date. l)))]
-							   (.setText status-label (.format (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss") date))
-							   (doseq [s (.getSeries time-series)]
-							     (let [index  (let [ind (.getIndex s (FixedMillisecond. date))]
-									    (if (< ind 0)
-									      (dec (Math/abs ind))
-									      ind))
-								   data  (if (= index (.getItemCount s))
-									   nil
-									   (.getDataItem s index))
-
-								   period (if data
-									    (.getPeriod data)
-									    nil)]
-							       ((:set-value tbl-model)
-								(comparable-as-name (.getKey s))
-								(if data
-								  (let [v (.getValue data)]
-								    (if (isNan v)
-								      "" v))
-								  "")))))))))
+                                                (when (= (.getType e) ChartProgressEvent/DRAWING_FINISHED)
+                                                  (when-let [crosshair-domain-marker @crosshair-domain-marker]
+                                                    (let [date (let [l (long (.getValue crosshair-domain-marker))]
+                                                                (if (zero? l)
+                                                                      nil
+                                                                      (Date. l)))]
+                                                      (.setText status-label (.format (SimpleDateFormat. "yyyy-MM-dd HH:mm:ss") date))
+                                                    (doseq [s (.getSeries time-series)]
+                                                      (let [index  (let [ind (.getIndex s (Millisecond. date))]
+                                                                     (if (< ind 0)
+                                                                       (dec (Math/abs ind))
+                                                                       ind))
+                                                            data  (if (= index (.getItemCount s))
+                                                                    nil
+                                                                    (.getDataItem s index))
+                                                            
+                                                            period (if data
+                                                                     (.getPeriod data)
+                                                                     nil)]
+                                                        ((:set-value tbl-model)
+                                                         (comparable-as-name (.getKey s))
+                                                         (if data
+                                                           (let [v (.getValue data)]
+                                                             (if (isNan v)
+                                                               "" v))
+                                                           ""))))))))))
 
 							
 		
 
     
     (.setDateFormatOverride (.getDomainAxis (.getPlot chart)) (SimpleDateFormat. "yy-MM-dd HH:mm:ss"))
-   ;(let [right-axis (NumberAxis.)
-;	  plot (.getPlot chart)]
- ;     (.setRangeAxis plot 1 right-axis)
-  ;    (.setDataset plot 1 right-series)
-   ;   )
+
+                                        
+
 
 
     (doto (.getPlot chart)
-      (.setDomainCrosshairVisible true)
       (.setBackgroundPaint Color/white)
+      (.setRangeGridlinesVisible true)
       (.setRangeGridlinePaint Color/gray)
-      (.setOutlineVisible false))
+      (.setDomainGridlinePaint Color/gray)
+      (.setDomainGridlinesVisible true)
+      (.setDomainMinorGridlinesVisible true)
+      (.setOutlineVisible false)
+      (.setDomainPannable true)
+      (.setRangePannable true))
+    
     
     (doto panel
       
@@ -930,21 +816,31 @@
 	      (.setTopComponent (let [chart-panel (ChartPanel. chart)]
 				  
 				  (doto chart-panel
-				  (.addComponentListener (proxy [ComponentAdapter] []
-							   (componentResized [e] 
-									     (let [c (.getComponent e)
-										   size (.getSize c)]
-									     ;(println (str "sized " c))
-									     
-									     (SwingUtilities/invokeLater 
-									      (fn []
-										(.setMinimumDrawHeight c (.getHeight size))
-										(.setMinimumDrawWidth c (.getWidth size))
-										(.setMaximumDrawHeight c (.getHeight size))
-										(.setMaximumDrawWidth c  (.getWidth size))
-										(.fireChartChanged (.getChart c))
-										))
-									     )))))))) BorderLayout/CENTER))
+                                    (.addComponentListener (proxy [ComponentAdapter] []
+                                                             (componentResized [e] 
+                                                               (let [c (.getComponent e)
+                                                                     size (.getSize c)]
+                                        ;(println (str "sized " c))
+                                                                 
+                                                                 (SwingUtilities/invokeLater 
+                                                                  (fn []
+                                                                    (.setMinimumDrawHeight c (.getHeight size))
+                                                                    (.setMinimumDrawWidth c (.getWidth size))
+                                                                    (.setMaximumDrawHeight c (.getHeight size))
+                                                                    (.setMaximumDrawWidth c  (.getWidth size))
+                                                                    (.fireChartChanged (.getChart c))
+                                                                    ))
+                                                                 ))))
+                                    (.addChartMouseListener (proxy [ChartMouseListener] []
+                                                              (chartMouseClicked [event]
+                                                                (when-let [v (mouseToX event chart-panel)]
+                                                                  (let [plot (.getPlot chart)] 
+                                                                  (when @crosshair-domain-marker
+
+                                                                      (.removeDomainMarker plot @crosshair-domain-marker))
+                                                                  (.addDomainMarker plot (swap! crosshair-domain-marker (fn [_] (doto (ValueMarker. v)
+                                                                                                                                  (.setPaint Color/gray))))))))
+                                                              (chartMouseMoved [events]))))))) BorderLayout/CENTER))
 ;     (let [d (.getComparator (.getRowSorter table) 2)]
 ;					      (println d)
 ;					      (println (.compare d 3 2)))
@@ -953,7 +849,11 @@
     
 					;(ChartUtilities/applyCurrentTheme chart)
    
-    {
+    {:progress-bar progressbar
+     :cancel-button cancel-button
+     :db-and-dir db-and-dir
+     :db-entries db-entries
+     :crosshair-domain-marker crosshair-domain-marker
      :disable-collection disable-timeseriescollection
      :enable-collection enable-timeseriescollection
      :name-as-comparable name-as-comparable
@@ -968,11 +868,11 @@
      :chart chart
      :colors (color-cycle)
      :time-series time-series 
-    :from (atom (Date. (- (System/currentTimeMillis) (* 1000 60 60))))
+     :from (atom (Date. (- (System/currentTimeMillis) (* 1000 60 60))))
      :to (atom (Date.))
      :name "Monitor - Analysis Window"
-     :transfer-queue (atom [])
      :num-to-render (atom 0)
      :num-rendered (atom 0)
+     :cancellation cancellation
      }))
 

@@ -1,6 +1,9 @@
 (ns monitor.commongui
   (:use (monitor calculations))
-  (:use [clojure.contrib import-static])
+  (:use [clojure.contrib.import-static]
+        [clojure.contrib.seq :only [positions]]
+        [clojure.pprint :only [pprint]])
+  
   (:import (javax.swing.table AbstractTableModel TableRowSorter))
   (:import (java.util Date Comparator))
   (:import (java.text DecimalFormat))
@@ -136,6 +139,8 @@
 		(getColumnCount [] (count @columns))
 		(getColumnName [column] (name (get @columns column))) 
 		(getValueAt [row column]
+                  ;(print "getValueAt " row column)
+                 
 			      (condp = column
 				  0 (:color (get @rows row))
 				  1 (is-visible @rows row)
@@ -168,7 +173,8 @@
 										     fake-visible-fn)}] 
 		    (when-not (some #(= (:data internal-data) (:data %)) @rows)
 		      (swap! rows (fn [rows] (conj rows internal-data)))
-		      (.fireTableDataChanged model))))
+                      (let [index (dec (count @rows))]
+                        (.fireTableRowsInserted model index index)))))
 	add-column (fn [k-word]
 		     (when-not (some #(= k-word %) @columns)
 		       (swap! columns (fn [cols] (conj cols k-word)))
@@ -188,18 +194,20 @@
 					 (if (empty? end)
 					   begining
 					   (apply conj begining end)))))
-			 (.fireTableDataChanged model)
+			 (.fireTableRowsDeleted model row-num row-num)
 			 (dotimes [row-number (count @rows)]
 			   (recolor-graph-fn row-number (:color (get @rows row-number)))))))
 	
 	set-value (fn [data value]
-		    (let [v value]
-		    (swap! rows (fn [rows]
-				  (into [] (map (fn [d]
-						  (if (= (:data d) data)
-						    (assoc d :value v)
-						    d)) rows)))))
-		    (.fireTableDataChanged model))] 
+		    (let [index (first (positions #(= data (:data %)) @rows))]
+                      ;(println "index" index "should become" value)
+                      (when index
+                                        ;(println "Rows is" @rows)
+                        (swap! rows update-in [index :value] (fn [_] value))
+;                        (swap! rows (fn [r] (assoc r index (assoc (get r index) :value value))))
+                        ;(pprint @rows)
+                        (flush)
+                        (.fireTableCellUpdated model index 2))))] 
 	(assoc {} 
 	  :model model 
 	  :rows rows 
