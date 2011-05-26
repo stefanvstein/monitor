@@ -1,13 +1,13 @@
 (ns monitor.newdb2
-  (:import (java.util Date Calendar))
-  (:import (java.util.concurrent TimeUnit CountDownLatch))
-  (:import (java.util.concurrent.locks ReentrantLock))
-  (:import (java.text SimpleDateFormat))
-  (:import (java.io IOException File FilenameFilter RandomAccessFile FileFilter))
-  (:import (java.nio.channels OverlappingFileLockException))
-  (:import (jdbm RecordManagerFactory RecordManager))
-  (:import (jdbm.btree BTree))
-  (:import (jdbm.helper Tuple TupleBrowser))
+  (:import [java.util Date Calendar Properties]
+           [java.util.concurrent TimeUnit CountDownLatch]
+           [java.util.concurrent.locks ReentrantLock]
+           [java.text SimpleDateFormat]
+           [java.io IOException File FilenameFilter RandomAccessFile FileFilter]
+           [java.nio.channels OverlappingFileLockException]
+           [jdbm RecordManagerFactory RecordManager RecordManagerOptions]
+           [jdbm.btree BTree]
+           [jdbm.helper Tuple TupleBrowser])
   (:use clojure.test)
   (:use [clojure.pprint :only [pprint]])
   (:use monitor.tools)
@@ -67,17 +67,17 @@
 (defn- day-struct [date create? db-lock db-closed ^String path name-day existing]
   (when @db-closed
     (throw (IllegalStateException. "DB is closed")))
-  (let [day (date-as-day date)
-        clear-cache-counter (atom 0)]
+  (let [day (date-as-day date)]
     (locking db-lock
       (let [create-day (fn create-day []
-                         ;(println "create-day " day)
                          (let [min-and-max (min-and-max-of-day (.parse (SimpleDateFormat. "yyyyMMdd") (str day)))
                                min-millis (.getTime ^Date (first min-and-max))
                                max-millis (.getTime ^Date (second min-and-max))
                                write-count (atom 0)
                                r  (try (RecordManagerFactory/createRecordManager
-                                        (.getPath (File. path (Integer/toString day))))
+                                        (.getPath (File. path (Integer/toString day)))
+                                        (doto (Properties.)
+                                          (.setProperty RecordManagerOptions/CACHE_TYPE "none")))
                                        (catch IOException e
                                          (throw (IOException. (str "Could not create day " day) e))))
                                id-name-tree  (try (let [k (.getNamedObject r "keys")]
@@ -178,7 +178,7 @@
                                            )))
                                        (catch IOException e
                                          (error (str "Could not write to " name " at " date ". " (.getMessage e)) e))))
-                            ;   clear-cache-counter (atom 10)
+                            
                                sync (fn sync []
                                       (when @closed
                                          (throw (IllegalStateException. (str "Day " day " is closed"))))
@@ -186,11 +186,6 @@
                                         (when-not @closed
                                           (try
                                             (.commit r)
-                                            (when (= 10 (swap! clear-cache-counter (fn [c]
-                                                                                     (if (> 0 c)
-                                                                                       10
-                                                                                       (dec c)))))
-                                              (.clearCache r))
                                             (reset! write-count 0)
                                             (catch IOException e
                                               (throw (IOException. (str "Could not sync " day ". " (.getMessage e)), e)))))))

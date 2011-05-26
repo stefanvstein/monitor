@@ -16,7 +16,7 @@
   :dev-dependencies [[swank-clojure "1.2.1"]]
   :javac-options {:debug "true"}
   :java-source-path "src"
-  :aot [monitor.main agent.Transformer]
+  :aot [#"^monitor.*" agent.Transformer]
   :main monitor.main
   :manifest {"Class-Path" "."
 	     "Premain-Class" "agent.Main"}
