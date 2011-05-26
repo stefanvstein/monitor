@@ -96,11 +96,6 @@
     (when i
       (assoc {} (Date. (.getFirstMillisecond (.getPeriod i))) (.getValue i)))))
   
-(defn- time-serie-to-sortedmap [timeserie]
-  (reduce (fn [r i] 
-	  (assoc r (Date. (.getFirstMillisecond (.getPeriod i ))) (.getValue i))) 
-	  (sorted-map) (.getItems timeserie))
-)
 
 (defn- index-by-name [time-series-collection name]
   (let [n (.getSeriesCount time-series-collection)]
@@ -292,7 +287,7 @@
                                                all-values (merge (get-from-disk (name-as-comparable data-key)) (val data))]
                                            (store-to-disk  (name-as-comparable data-key) all-values)
                                            (let [calc-data (reduce-samples (with-nans (transform all-values func-string) nan-distance))]
-                                             (let [time-serie (if-let [serie (. time-series-coll getSeries (name-as-comparable data-key))]
+                                             (let [^TimeSeries time-serie (if-let [serie (. time-series-coll getSeries (name-as-comparable data-key))]
                                                                 serie
                                                                 (create-new-time-serie data-key))]
                                                (.clear time-serie)
