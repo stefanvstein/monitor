@@ -3,7 +3,8 @@
 		    IOException InputStreamReader InputStream Closeable)
 	   (java.net ServerSocket SocketTimeoutException Socket)
 	   (java.util.concurrent Executors)
-	   (java.util Date))
+	   (java.util Date)
+           )
 	  
   (:use [monitor.database :only [add-data]])
   (:use [monitor.server :only [serve tasks-to-start]])
@@ -15,6 +16,7 @@
 
 (def readers-writers (atom #{}))
 
+           
 (defn write-data
   ([data #^Date timestamp value save?]
      (let [to-write (pr-str (into {:data data :time (.getTime timestamp) :value value} (when (not (nil? save?))
@@ -41,9 +43,9 @@
 (defn add-data-from [data-read]
   (if (not (nil? (:save data-read)))
     (do
-      (add-data (:data data-read) (Date. #^Long (:time data-read)) (:value data-read) (:save data-read)))
+      (add-data (:data data-read) (dateOf (:time data-read)) (:value data-read) (:save data-read)))
     (do
-      (add-data (:data data-read) (Date. #^Long (:time data-read)) (:value data-read)))))
+      (add-data (:data data-read) (dateOf (:time data-read)) (:value data-read)))))
 
 
 (defn jmx-remote [^String host ^Integer port term?]

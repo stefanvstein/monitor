@@ -16,6 +16,8 @@
   
 (def *db-env* (atom nil)) ;This should be obsolete, moved to the client side
 
+(def biglock (Object.))
+
 #_(defprotocol DayProtocol
   (names-of-day [this])
   (read-data [this name])
@@ -465,50 +467,56 @@
 
 
 (defn days-with-data []
-;  (println "days-with-data")
+                                        ;  (println "days-with-data")
+  (locking biglock
      (when-let [db (:db @*db-env*)]
        (let [r @(:existing db)]
  ;        (println "Existing days " r)
-         r)))
+         r))))
 
 
 (defn names
   [day]
+  (locking biglock
      (when-let [env @*db-env*]
        (acquire-and-release env day false
                             (if *day*
                               ((:names *day*))
-                              ))))
+                              )))))
 
 (defn add-to-db
   [value time keys]
-  ;(println "add-to-db")
+                                        ;(println "add-to-db")
+  (locking biglock
   (when-let [env @*db-env*]
     (acquire-and-release env time true
-                         ((:write *day*) keys time value))))
+                         ((:write *day*) keys time value)))))
 
 (defn sync-database
   []
+  (locking biglock
   (when-let [env @*db-env*]
     (doseq [day ((:fifo env))]
       (acquire-and-release env day false
-                           ((:sync *day*))))))
+                           ((:sync *day*)))))))
 
 (defn remove-date
   [date]
+  (locking biglock
   (when-let [env @*db-env*]
     (when ((:closed? env) date)
-      ((:delete (:db env)) date))))
+      ((:delete (:db env)) date)))))
 
 
 (defn get-from-db
   [fun day keys]
+  (locking biglock
   (when-let [env @*db-env*]
     (acquire-and-release env day false
                          (when *day*
                            (let [r ((:read *day*) keys)]
                              (doseq [e (seq r)]
-                               (fun [e])))))))
+                               (fun [e]))))))))
 
 
 (defn compress-data
@@ -532,6 +540,31 @@
                      (get-from-db (fn [p] (println p)) (da "20010202 000003") {:arne "Weise"})
                      (println "names" (names (da "20010202 000002")))
                       (sync-database)
-                     (println (days-with-data)) 
+                      (println (days-with-data))
+                      (remove-date (da "20010202 000000"))
+                      (sync-database)
+                      (remove-date (da "20010202 000000"))
+                      (sync-database)
+                      
                     
        ))))
+
+(deftest punch-some
+  (println "by push")
+  
+   (with-temp-dir
+     (let [da (fn [s] (.parse (SimpleDateFormat. "yyyyMMdd HHmmss") s))
+           ra (java.util.Random. 1)]
+       (using-db-env (.getPath *temp-dir*)
+                     (let [ts (reduce (fn [r i]
+                                        (let [t (Thread. (fn []
+                     (time (dotimes [i 20000]
+                       (condp > (.nextInt ra 500)
+                           495 (do (print "+")(add-to-db (.nextInt ra 1000) (da (str "20010" (.nextInt ra 10) (.nextInt ra 28) (.nextInt ra 10) " 00" (.nextInt ra 6)  (.nextInt ra 10) (.nextInt ra 6)  (.nextInt ra 10))) {:a (str "oll" (.nextInt ra 4))})  )
+                           497 (do (sync-database) (print "."))
+                           500 (do (print "-")(remove-date (da (str "20010" (.nextInt ra 10) (.nextInt ra 28) (.nextInt ra 10) " 010010")))))))))]
+                                          (.start t)
+                                          (conj r t))) #{} (take 10 (repeat 1)))]
+                       (doseq [t ts]
+                         (.join t))))))) 
+

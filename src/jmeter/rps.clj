@@ -5,8 +5,23 @@
   (:import [java.io FileWriter])
   (:import (com.csvreader CsvReader)))
 
-#_(def printex (fn [& _]))
-(def printex println)
+
+(def printex (fn [& _]))
+#_(def printex println)
+
+(defn date [string]
+  (.parse (SimpleDateFormat. "yyyy-MM-dd") string))
+
+(defn date-string [date]
+  (.format (SimpleDateFormat. "yyyy-MM-dd") date))
+
+(defn next-day [day]
+  (let [df (SimpleDateFormat. "yyyy-MM-dd")]
+    (.format df (second (day-by-day day)))))
+
+(defn days [from to]
+  (let [df (SimpleDateFormat. "yyyy-MM-dd")]
+    (map #(.format df %) (take-while #(< (.getTime %) (.getTime to)) (day-by-day from)))))
 
 (defn- record-seq [filename]
   (let [csv (CsvReader. filename)
@@ -65,14 +80,14 @@
 (defn rotations [host port pools days]
   (for [pool pools day days]
     (try
-      (when (rotation host port pool day day)
-        (println day pool))
+      (when (rotation host port pool day day))
+        (println (str day "," day "," pool))
       (catch Exception e
         (printex (.getMessage e))
         nil))))
 
 (defn coachlist [host port train day station]
-  (let [body "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:coac=\"http://www.qnamic.com/schema/request/report/coachlist\">
+  (let [body (str "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:coac=\"http://www.qnamic.com/schema/request/report/coachlist\">
    <soapenv:Header/>
    <soapenv:Body>
       <coac:Report>
@@ -81,8 +96,18 @@
          <coac:Station>" station "</coac:Station>
       </coac:Report>
    </soapenv:Body>
-</soapenv:Envelope>"]
+</soapenv:Envelope>")]
     (post host port body)))
+
+(defn coachlists [host port trains days stations]
+  (for [train trains day days station stations]
+    (try
+      (when (coachlist host port train day station)
+        (println (str train "," day "," station)))
+      (catch Exception e
+        (printex (.getMessage e))
+        nil))))
+
 
 (defn departure [host port train date station] 
   (let [body (str "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:dep=\"http://www.qnamic.com/schema/request/report/composition/departing\">    <soapenv:Header/>    <soapenv:Body>       <dep:Report>          <dep:TrainNumber>" train "</dep:TrainNumber>          <dep:Date>" date "</dep:Date>          <dep:Station>" (if station station "") "</dep:Station>       </dep:Report>    </soapenv:Body> </soapenv:Envelope>")]
@@ -92,7 +117,7 @@
   (for [train trains day days station stations]
     (try
       (when (departure host port train day station)
-        (println day train station))
+        (println (str day "," train "," station)))
       (catch Exception e
         (printex (.getMessage e))
         nil))))
@@ -105,7 +130,7 @@
   (for [train trains day days station stations]
     (try
       (when (arrival host port train day station)
-        (println day train station))
+        (println (str day "," train "," station)))
       (catch Exception e
         (printex (.getMessage e))
         nil))))
@@ -119,13 +144,14 @@
   (for [pool pools day days station stations]
     (try
       (when (turnaround host port pool day day station)
-        (println day day pool station))
+        (println (str day "," day "," pool "," station)))
       (catch Exception e
         (printex (.getMessage e))
         nil))))
 
-(defn depot-trains [host port depot start stop]
-  (let [body (str "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:dep=\"http://www.qnamic.com/schema/request/depottrain\">
+(defn depot-train [host port depot start stop]
+  
+      (let [body  (str "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:dep=\"http://www.qnamic.com/schema/request/depottrain\">
    <soapenv:Header/>
    <soapenv:Body>
       <dep:DepotTrains>
@@ -137,12 +163,22 @@
 </soapenv:Envelope>")]
     (post host port body)))
 
+(defn depot-trains [host port depots days]
+  (for [depot depots day days]
+    (try
+      (let [next-day (date-string (second (day-by-day (date day))))]
+        (when (depot-train host port depot day next-day)
+          (println (str depot "," day "," next-day))))
+      (catch Exception e
+        (printex (.getMessage e))
+        nil))))
+
 (defn inspection-interval [host port vehicle-id vehicle-type]
   (let [body (str "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:imp=\"http://www.qnamic.com/schema/request/imp\" xmlns:com=\"http://www.qnamic.com/schema/common\" xmlns:common=\"http://www.qnamic.com/schema/common\">
    <soapenv:Header/>
    <soapenv:Body>
       <imp:MasterDataImport type=\"INSPECTION_INTERVAL\">
-         <imp:Resource id=\"prestandatest\" updateMode=\"update\">
+         <imp:Resource id=\"prestandatest\" updateMode=\"override\">
             <imp:ValidFrom timestamp=\"2008-03-11T16:30:00\">
          <imp:Attribute key=\"INSPECTION_TYPE\" value=\"T1\"/>
          <imp:Attribute key=\"NORMATIVE_KM_LIMIT\" value=\"200000\"/>
@@ -168,6 +204,10 @@
 </soapenv:Envelope>")]
     (post host port body)))
 
+(defn create-inspections [ids types]
+  (for [id ids type types]
+    (println (str id "," type))))
+
 (defn pda [host port train date]
   (let [body (str "<soapenv:Envelope xmlns:soapenv=\"http://schemas.xmlsoap.org/soap/envelope/\" xmlns:tra=\"http://www.qnamic.com/schema/request/traincomposition\">
    <soapenv:Header/>
@@ -186,17 +226,11 @@
   (for [train trains day days]
     (try
       (when (pda host port train day )
-        (println day train))
+        (println (str day "," train)))
       (catch Exception e
         (printex (.getMessage e))
         nil))))
 
-(defn date [string]
-  (.parse (SimpleDateFormat. "yyyy-MM-dd") string))
-
-(defn days [from to]
-  (let [df (SimpleDateFormat. "yyyy-MM-dd")]
-    (map #(.format df %) (take-while #(< (.getTime %) (.getTime to)) (day-by-day from)))))
 
 (defn test-turnarounds [days]
   (let [pools ["X2_5"]
@@ -222,8 +256,14 @@
     (dorun (pdas "litmsj623.sj.se" 34000 train days))))
 
 (defn fetch-all [days host port]
+  ;(future ;Funkar inte
+   #_(let [train (trains train-no identity)]
+      (with-open [fw (FileWriter. "coachlist.csv")]
+        (binding [*out* fw]
+          (dorun (coachlists host port train days [""])))))
+   ;)
   (future
-    (let [train (trains train-no identity)]
+   (let [train (trains train-no identity)]
       (with-open [fw (FileWriter. "pda.csv")]
         (binding [*out* fw]
           (dorun (pdas host port train days))))))
@@ -237,14 +277,23 @@
           tra (trains train-and-from identity)]
       (with-open [fw (FileWriter. "departures.csv")]
         (binding [*out* fw]
-          (dorun (departures host port (map first tra) days (map second tra)))))))
-  
+          (dorun (departures host port (map first tra) days [""] #_(map second tra)))))))
+
   (future
     (let [train-and-to (fn [e] [(get e "train") (get e "to")])
           tra (trains train-and-to identity)]
-      (with-open [fw (FileWriter. "arrivals.csv")]
+      (with-open [fw (FileWriter. "arivals.csv")]
         (binding [*out* fw]
-          (dorun (arrivals host port (map first tra) days (map second tra)))))))
+          (dorun (arrivals host port (map first tra) days [""] #_(map second tra)))))))
+  
+  (future
+    (let [vehicle-and-pool (fn [e] [(get e "vehicle") (get e "pool")])
+          ve (vehicles vehicle-and-pool identity)] ;Bara fordon?
+      (with-open [fw (FileWriter. "inspections.csv")]
+        (binding [*out* fw]
+          (doseq [v ve] (println (str (first v) "," (second v))))))))
+                 
+         
   
   (future
     (let [pools (vehicles pool fordon?)
@@ -253,10 +302,10 @@
         (binding [*out* fw]
           (dorun (turnarounds host port pools days stations))))))
   
-  (future
+  #_(future ; Vi får tillbaka klassnamn com.qnamic.planopt.base.model.REImpl
     (let [depots ["HGL" "G"]]
       (with-open [fw (FileWriter. "depottrains.csv")]
         (binding [*out* fw]
-          (dorun (depot-trains host port depots days days))))))
+          (dorun (depot-trains host port depots days))))))
   
 )

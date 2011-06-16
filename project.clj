@@ -11,8 +11,9 @@
                  [commons-io "1.4"]
 ;                 [org.jboss.netty/netty "3.2.4.Final"]
                  [com.google.guava/guava "r09"]
-                 [com.google.protobuf/protobuf-java "2.4.0a"]]
-  :min-lein-version "1.4.1" 
+                 [com.google.protobuf/protobuf-java "2.4.0a"]
+                 [asm/asm-commons "3.3.1"]]
+  :min-lein-version "1.5.2" 
   :dev-dependencies [[swank-clojure "1.2.1"]]
   :javac-options {:debug "true"}
   :java-source-path "src"
@@ -26,5 +27,6 @@
   :jvm-opts [ "-Dstayalive=true"]
   :repositories {"jboss" "http://repository.jboss.com/maven2/"
 		 "oracle" "http://download.oracle.com/maven"
-		 "mavenlocalrepo" "file://mavenlocalrepo"}
+		 "mavenlocalrepo" "file://mavenlocalrepo"
+                 "ow2" "http://maven.ow2.org/maven2/"}
 )

@@ -62,7 +62,8 @@
 				      (let [label (:label v)]
 					(if-let [d (get r label)]
 					  (assoc r label (conj d v))
-					  (assoc r label (sorted-set-by #(- (.getTime (:timestamp %1))
+                                          (assoc r label [v])
+					  #_(assoc r label (sorted-set-by #(- (.getTime (:timestamp %1))
 									    (.getTime (:timestamp %2))) v))))) 
 				    {} values))
 	   
@@ -96,7 +97,7 @@
 								 :errors errors})))
 					   (sorted-map) v))
 	   ;Comparator based on :timestamp wich should be a java.util.Date
-	   per-time-stamp #(int (- (* 1000 (.getTime (:timestamp %1))) (* 1000 (.getTime (:timestamp %2)))))]
+	   per-time-stamp #(long (- (* 1000 (.getTime (:timestamp %1))) (* 1000 (.getTime (:timestamp %2)))))]
 
        (let [filename (str testcase "-Requests.csv")]
 	 (println "Creating" filename)
@@ -132,33 +133,34 @@
 						  (dformat (:mean-response va)) ","
 						  (:errors va))))
 				(-> r
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "tps" "section" "Total"} ke] (:tps va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "average" "section" "Total"} ke] (:average-response va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "max" "section" "Total"} ke] (:max-response va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "min" "section" "Total"} ke] (:min-response va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "mean" "section" "Total"} ke] (:mean-response va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "errors" "section" "Total"} ke] (:errors va)))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "tps" "section" "Total"} ke] (:tps va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "average" "section" "Total"} ke] (:average-response va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "max" "section" "Total"} ke] (:max-response va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "min" "section" "Total"} ke] (:min-response va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "mean" "section" "Total"} ke] (:mean-response va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "errors" "section" "Total"} ke] (:errors va)))
 				
 				))
 				
 				
-			    {{"instance" testcase "category" "test" "counter" "tps" "section" "Total"} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "average" "section" "Total"} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "max" "section" "Total"} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "min" "section" "Total"} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "mean" "section" "Total"} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "errors" "section" "Total"} (sorted-map)
+			    {{"instance" testcase "category" "Test" "counter" "tps" "section" "Total"} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "average" "section" "Total"} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "max" "section" "Total"} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "min" "section" "Total"} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "mean" "section" "Total"} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "errors" "section" "Total"} (sorted-map)
 			     }
 			    
 			    (per-second-statistics
 			     (per-second
 			      (sort per-time-stamp (map into-data (csv-seq file true))))))]
-	     #_(pprint vs)
+	
 	     (when connection
 	       (doseq [v vs]
 		 (.add connection (key v) (val v)))))))
 	 
-       (doseq [t (per-trans-name (sort per-time-stamp (map into-data (csv-seq file true))))]
+                                        ;(doseq [t (per-trans-name (sort per-time-stamp (map into-data (csv-seq file true))))]
+       (doseq [t (per-trans-name (map into-data (csv-seq file true)))]
 	 (let [test-name (key t)
 	       filename (str testcase "-Requests-per-s-" (key t) ".csv")]
 	   (println "Creating" filename)
@@ -178,36 +180,26 @@
 						  (dformat (:mean-response va)) ","
 						  (:errors va))))
 				(-> r
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "tps" "section" test-name} ke] (:tps va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "average" "section" test-name} ke] (:average-response va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "max" "section" test-name} ke] (:max-response va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "min" "section" test-name} ke] (:min-response va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "mean" "section" test-name} ke] (:mean-response va))
-				    (assoc-in [{"instance" testcase "category" "test" "counter" "errors" "section" test-name} ke] (:errors va)))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "tps" "section" test-name} ke] (:tps va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "average" "section" test-name} ke] (:average-response va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "max" "section" test-name} ke] (:max-response va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "min" "section" test-name} ke] (:min-response va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "mean" "section" test-name} ke] (:mean-response va))
+				    (assoc-in [{"instance" testcase "category" "Test" "counter" "errors" "section" test-name} ke] (:errors va)))
 			    	
 			      ))
-			    {{"instance" testcase "category" "test" "counter" "tps" "section" test-name} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "average" "section"  test-name} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "max" "section"  test-name} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "min" "section"  test-name} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "mean" "section"  test-name} (sorted-map)
-			     {"instance" testcase "category" "test" "counter" "errors" "section"  test-name} (sorted-map)}
-			    (per-second-statistics (per-second (val t))))]
-	     #_(pprint vs)
+			    {{"instance" testcase "category" "Test" "counter" "tps" "section" test-name} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "average" "section"  test-name} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "max" "section"  test-name} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "min" "section"  test-name} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "mean" "section"  test-name} (sorted-map)
+			     {"instance" testcase "category" "Test" "counter" "errors" "section"  test-name} (sorted-map)}
+			    (per-second-statistics (per-second (sort per-time-stamp (val t)))))]
+	    
 	     (when connection
 	     (doseq [v vs]
 	       (.add connection (key v) (val v))) 
 	     )
-	   #_(doseq [s (per-second-statistics (per-second (val t)))]
-	     (.println p (str
-			  (dateformat (key s)) ","
-			  (tformat (key s)) ","
-			  (let [v (val s)] 
-			    (str (:tps v) ","
-				 (dformat (:average-response v)) ","
-				 (dformat (:max-response v)) ","
-				 (dformat (:min-response v)) ","
-				 (dformat (:mean-response v)) ","
-				 (:errors v)))))))))))))
+	  )))))))
 	 
 	 

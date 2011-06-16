@@ -3,11 +3,19 @@
   (:import (java.io File IOException FileNotFoundException))
   (:import (java.util.concurrent TimeUnit CountDownLatch))
   (:import (java.text SimpleDateFormat))
+  (:import (com.google.common.collect MapMaker))
   (:use clojure.test)
   (:use [clojure.java.io :only [delete-file]])
   ;(:use [clojure.contrib java-utils])
   )
 
+(def dateCache  (-> (MapMaker.) (.maximumSize 1000) (.makeMap)) )
+(defn dateOf [#^Long timestamp]
+  (if-let [d (.get dateCache timestamp)]
+    d
+    (let [d (Date. timestamp)]
+      (.put dateCache timestamp d)
+      d)))
 (defn wait-on-latch [^CountDownLatch latch millis terminate?]
    (let [until (+ 10000 (System/currentTimeMillis))]
      (first (drop-while #(when (instance? InterruptedException %)
